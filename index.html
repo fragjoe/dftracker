@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DFtracker — Delta Force Market & Player Stats</title>
+  <meta name="description" id="meta-description"
+    content="DFtracker — Pantau harga market dan statistik pemain Delta Force secara real-time. Dilengkapi grafik riwayat harga dan performa pemain." />
+  <meta name="keywords"
+    content="Delta Force, DFtracker, Delta Force Statistics, Delta Force Market, Delta Force Stats Tracker" />
+  <meta name="author" content="FragjoeYT" />
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://dftracker.vercel.app/" />
+  <meta property="og:title" content="DFtracker — Delta Force Market & Player Stats" />
+  <meta property="og:description"
+    content="Analisis pasar dan statistik pemain Delta Force secara detail dan real-time." />
+  <meta property="og:image" content="https://dftracker.vercel.app/og-image.jpg" />
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image" />
+  <meta property="twitter:url" content="https://dftracker.vercel.app/" />
+  <meta property="twitter:title" content="DFtracker — Delta Force Market & Player Stats" />
+  <meta property="twitter:description"
+    content="Analisis pasar dan statistik pemain Delta Force secara detail dan real-time." />
+  <meta property="twitter:image" content="https://dftracker.vercel.app/og-image.jpg" />
+
+  <link rel="canonical" id="canonical-link" href="https://dftracker.vercel.app/" />
+  <meta name="theme-color" content="#0a0f0d" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+</head>
+
+<body>
+  <div id="app">
+    <header id="header" class="header">
+      <div class="container header-content">
+        <div class="brand">
+          <div class="brand-group">
+            <a href="/" class="brand-link">
+              <span class="brand-text">DF<span class="brand-highlight">TRACKER</span></span>
+            </a>
+            <a href="https://www.youtube.com/@FRAGJOE" target="_blank" class="brand-tagline">by FragjoeYT</a>
+          </div>
+        </div>
+        <nav class="nav" id="nav">
+          <a href="/player" class="nav-item active" data-page="player">
+            <span class="nav-label">Stats</span>
+          </a>
+          <a href="/market" class="nav-item" data-page="market">
+            <span class="nav-label">Market</span>
+          </a>
+        </nav>
+        <div class="header-status">
+          <div class="api-status">
+            <span class="status-dot"></span>
+            <span class="status-text">Online</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="main-content">
+      <div class="container">
+        <div id="page-container" class="page-container"></div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-content">
+        <div class="footer-links">
+          <a href="/privacy" class="footer-link">Privacy Policy</a>
+          <span class="footer-sep">•</span>
+          <a href="/terms" class="footer-link">Terms of Service</a>
+          <span class="footer-sep">•</span>
+          <a href="/support" class="footer-link footer-link-highlight">Support</a>
+        </div>
+        <a href="/version" class="footer-version" style="text-decoration: none;">v1.2.0</a>
+      </div>
+    </footer>
+  </div>
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal-content" class="modal-content"></div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
