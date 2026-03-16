@@ -27,11 +27,8 @@ const ACTIVE_PLAYER_PROFILE_KEY = 'active_player_profile';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NUMERIC_ID_PATTERN = /^\d{6,}$/;
 const AUTO_SEARCH_NUMERIC_ID_LENGTH = 20;
-const AUTO_SEARCH_NAME_MIN_LENGTH = 3;
 const AUTO_SEARCH_DEBOUNCE_MS = {
-  uuid: 300,
   numericId: 350,
-  name: 800,
 };
 const PLAYER_CACHE_MAX_AGE_MS = {
   lookup: 10 * 60 * 1000,
@@ -599,16 +596,8 @@ export async function renderPlayerPage(container) {
     const query = rawQuery.trim();
     if (!query) return null;
 
-    if (UUID_PATTERN.test(query)) {
-      return { delayMs: AUTO_SEARCH_DEBOUNCE_MS.uuid };
-    }
-
     if (/^\d+$/.test(query) && query.length === AUTO_SEARCH_NUMERIC_ID_LENGTH) {
       return { delayMs: AUTO_SEARCH_DEBOUNCE_MS.numericId };
-    }
-
-    if (!NUMERIC_ID_PATTERN.test(query) && query.length >= AUTO_SEARCH_NAME_MIN_LENGTH) {
-      return { delayMs: AUTO_SEARCH_DEBOUNCE_MS.name };
     }
 
     return null;
