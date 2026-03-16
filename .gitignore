@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+.DS_Store
+src/.DS_Store
+
+lighthouse-report.json
+
+coverage/
+.vitest/
+
+.env
+.env.*
+!.env.example

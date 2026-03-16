@@ -4,6 +4,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="index,follow" />
+  <meta name="color-scheme" content="dark" />
   <title>DFtracker — Delta Force Market & Player Stats</title>
   <meta name="description" id="meta-description"
     content="DFtracker — Pantau harga market dan statistik pemain Delta Force secara real-time. Dilengkapi grafik riwayat harga dan performa pemain." />
@@ -13,6 +15,7 @@
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="DFtracker" />
   <meta property="og:url" content="https://dftracker.vercel.app/" />
   <meta property="og:title" content="DFtracker — Delta Force Market & Player Stats" />
   <meta property="og:description"
@@ -26,19 +29,16 @@
   <meta property="twitter:description"
     content="Analisis pasar dan statistik pemain Delta Force secara detail dan real-time." />
   <meta property="twitter:image" content="https://dftracker.vercel.app/og-image.jpg" />
+  <meta property="twitter:image:alt" content="DFtracker market and player stats dashboard" />
 
   <link rel="canonical" id="canonical-link" href="https://dftracker.vercel.app/" />
   <meta name="theme-color" content="#0a0f0d" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet" />
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
 </head>
 
 <body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
   <div id="app">
     <header id="header" class="header">
       <div class="container header-content">
@@ -47,23 +47,42 @@
             <a href="/" class="brand-link">
               <span class="brand-text">DF<span class="brand-highlight">TRACKER</span></span>
             </a>
-            <a href="https://www.youtube.com/@FRAGJOE" target="_blank" class="brand-tagline">by FragjoeYT</a>
+            <div class="api-status brand-status">
+              <span class="status-dot"></span>
+              <span class="status-text" id="api-status-text">Online</span>
+            </div>
           </div>
         </div>
         <nav class="nav" id="nav">
           <a href="/player" class="nav-item active" data-page="player">
-            <span class="nav-label">Stats</span>
+            <span class="nav-label" id="nav-player-label">Stats</span>
+          </a>
+          <a href="/wealth" class="nav-item" data-page="wealth">
+            <span class="nav-label" id="nav-wealth-label">Wealth</span>
           </a>
           <a href="/market" class="nav-item" data-page="market">
-            <span class="nav-label">Market</span>
+            <span class="nav-label" id="nav-market-label">Market</span>
           </a>
-        </nav>
-        <div class="header-status">
-          <div class="api-status">
-            <span class="status-dot"></span>
-            <span class="status-text">Online</span>
+          <div class="language-dropdown" id="language-dropdown">
+            <button
+              type="button"
+              class="language-trigger"
+              id="language-trigger"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              <span id="language-trigger-flag" class="lang-flag flag-en" aria-hidden="true"></span>
+              <span id="language-trigger-text">English</span>
+              <span class="language-trigger-chevron" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                </svg>
+              </span>
+            </button>
+            <div class="language-menu hidden" id="language-menu" role="menu" aria-labelledby="language-trigger"></div>
           </div>
-        </div>
+        </nav>
+        <div id="header-active-player" class="header-active-player hidden" aria-live="polite"></div>
       </div>
     </header>
 
@@ -76,19 +95,59 @@
     <footer class="footer">
       <div class="container footer-content">
         <div class="footer-links">
-          <a href="/privacy" class="footer-link">Privacy Policy</a>
+          <a href="/privacy" class="footer-link" id="footer-privacy-link">Kebijakan Privasi</a>
           <span class="footer-sep">•</span>
-          <a href="/terms" class="footer-link">Terms of Service</a>
+          <a href="/terms" class="footer-link" id="footer-terms-link">Ketentuan Layanan</a>
           <span class="footer-sep">•</span>
-          <a href="/support" class="footer-link footer-link-highlight">Support</a>
+          <a href="/support" class="footer-link footer-link-highlight" id="footer-support-link">Dukung Proyek</a>
         </div>
-        <a href="/version" class="footer-version" style="text-decoration: none;">v1.2.0</a>
+        <div class="footer-meta">
+          <a href="/version" class="footer-version" style="text-decoration: none;">v1.3.0</a>
+          <a href="https://www.youtube.com/@FRAGJOE" target="_blank" rel="noopener noreferrer" class="footer-credit">by FragjoeYT</a>
+        </div>
       </div>
     </footer>
   </div>
   <div id="modal-overlay" class="modal-overlay hidden">
     <div id="modal-content" class="modal-content"></div>
   </div>
+    <div id="storage-notice" class="storage-notice hidden" role="status" aria-live="polite">
+      <div class="storage-notice__panel">
+        <div class="storage-notice__content">
+          <i data-lucide="info" class="storage-notice__icon" aria-hidden="true"></i>
+          <span id="storage-notice-text"></span>
+      </div>
+      <div class="storage-notice__actions">
+        <a href="/privacy" class="storage-notice__link" id="storage-notice-link"></a>
+        <button type="button" class="storage-notice__button" id="storage-notice-dismiss"></button>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const path = window.location.pathname;
+      if (path !== '/' && path !== '/player') return;
+
+      const container = document.getElementById('page-container');
+      if (!container) return;
+
+      container.innerHTML = `
+        <div class="page-header">
+          <h1 class="page-title">Player Stats</h1>
+          <p class="page-subtitle">Analyze player performance and wealth history in one place</p>
+        </div>
+        <div class="player-search-shell player-prerender-shell" aria-hidden="true">
+          <div class="search-bar">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input type="text" class="search-input" placeholder="Enter player ID or player name..." disabled />
+          </div>
+          <div class="market-search-meta player-search-support text-muted">
+            <span>Available for Delta Force Steam for Operations mode</span>
+          </div>
+        </div>
+      `;
+    })();
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 

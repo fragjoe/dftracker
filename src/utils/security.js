@@ -3,6 +3,8 @@
  * XSS Protection and Error Sanitization
  */
 
+import { t } from '../i18n.js';
+
 /**
  * Escapes HTML special characters to prevent XSS.
  * @param {string} str - Raw string from external source.
@@ -25,17 +27,17 @@ export function sanitizeError(err) {
 
     // Mask 404s with a friendlier message if it's an API specific code
     if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-        return 'Data tidak ditemukan (404). Silakan periksa kembali ID atau filter pencarian Anda.';
+        return t('app.errors.notFound');
     }
 
     // Mask technical fetch details
     if (msg.includes('fetch') || msg.includes('Failed to fetch')) {
-        return 'Gagal terhubung ke API. Periksa koneksi internet Anda atau coba lagi nanti.';
+        return t('app.errors.network');
     }
 
     // Fallback to a generic message for anything too technical
     if (msg.includes('{') || msg.includes('protocol')) {
-        return 'Terjadi kesalahan sistem saat mengambil data.';
+        return t('app.errors.system');
     }
 
     return msg;

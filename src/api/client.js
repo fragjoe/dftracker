@@ -4,6 +4,7 @@
  */
 
 import { sanitizeError } from '../utils/security.js';
+import { getApiLanguage } from '../i18n.js';
 
 const BASE_URL = '/api';
 
@@ -12,7 +13,9 @@ const HEADERS = {
     'Content-Type': 'application/json',
 };
 
-const DEFAULT_LANGUAGE = 'LANGUAGE_EN';
+export const LANGUAGE_EN = 'LANGUAGE_EN';
+export const LANGUAGE_ID = 'LANGUAGE_ID';
+export const LANGUAGE_ZH_HANS = 'LANGUAGE_ZH_HANS';
 
 /**
  * Generic POST request to the API
@@ -32,23 +35,31 @@ async function apiPost(endpoint, body = {}) {
 
         return await res.json();
     } catch (err) {
-        throw new Error(sanitizeError(err));
+        throw new Error(sanitizeError(err), { cause: err });
     }
 }
 
 // ─── Auction Market ──────────────────────────────────────
 
-export async function listAuctionItems({ filter = '', pageSize = 20, pageToken = '', language = DEFAULT_LANGUAGE } = {}) {
-    return apiPost('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+export async function listAuctionItems({
+    filter = '',
+    orderBy = '',
+    pageSize = 20,
+    pageToken = '',
+    language = getApiLanguage()
+} = {}) {
+    const body = {
         language, filter, pageSize, pageToken,
-    });
+    };
+    if (orderBy) body.orderBy = orderBy;
+    return apiPost('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', body);
 }
 
-export async function getAuctionItem(id, language = DEFAULT_LANGUAGE) {
+export async function getAuctionItem(id, language = getApiLanguage()) {
     return apiPost('/deltaforceapi.gateway.v1.ApiService/GetAuctionItem', { id, language });
 }
 
-export async function getAuctionItemPrices(auctionItemId, { pageSize = 20, pageToken = '', orderBy = '', startTime = '', endTime = '', language = DEFAULT_LANGUAGE } = {}) {
+export async function getAuctionItemPrices(auctionItemId, { pageSize = 20, pageToken = '', orderBy = '', startTime = '', endTime = '', language = getApiLanguage() } = {}) {
     const body = { auctionItemId, pageSize, pageToken, language };
     if (orderBy) body.orderBy = orderBy;
     if (startTime) body.startTime = startTime;
@@ -56,7 +67,7 @@ export async function getAuctionItemPrices(auctionItemId, { pageSize = 20, pageT
     return apiPost('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPrices', body);
 }
 
-export async function getAuctionItemPriceSeries(auctionItemId, { startTime = '', endTime = '', interval = '', language = DEFAULT_LANGUAGE } = {}) {
+export async function getAuctionItemPriceSeries(auctionItemId, { startTime = '', endTime = '', interval = '', language = getApiLanguage() } = {}) {
     return apiPost('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
         auctionItemId, startTime, endTime, interval, language
     });
@@ -73,10 +84,11 @@ export async function getAuctionItemReferencePriceSeries(auctionItemId, { startT
 /**
  * Get player info — use deltaForceId (the long number) or id (UUID)
  */
-export async function getPlayer({ id = '', deltaForceId = '' } = {}) {
+export async function getPlayer({ id = '', deltaForceId = '', name = '' } = {}) {
     const body = {};
     if (id) body.id = id;
     if (deltaForceId) body.deltaForceId = deltaForceId;
+    if (name) body.name = name;
     return apiPost('/deltaforceapi.gateway.v1.ApiService/GetPlayer', body);
 }
 
@@ -98,16 +110,6 @@ export async function getPlayerOperationStashValue(playerId) {
 }
 
 /**
- * Get player historical stats — MUST use playerId (UUID) + startTime/endTime
- */
-export async function getPlayerOperationHistoricalStats(playerId, { startTime = '', endTime = '', pageSize = 20, pageToken = '' } = {}) {
-    const body = { playerId, pageSize, pageToken };
-    if (startTime) body.startTime = startTime;
-    if (endTime) body.endTime = endTime;
-    return apiPost('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStats', body);
-}
-
-/**
  * Get player historical stash value — MUST use playerId (UUID) + startTime/endTime
  */
 export async function getPlayerOperationHistoricalStashValue(playerId, { startTime = '', endTime = '', pageSize = 20, pageToken = '' } = {}) {
@@ -117,30 +119,10 @@ export async function getPlayerOperationHistoricalStashValue(playerId, { startTi
     return apiPost('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', body);
 }
 
-// ─── Maps ────────────────────────────────────────────────
-
-export async function listMaps({ pageSize = 50, pageToken = '', language = DEFAULT_LANGUAGE } = {}) {
-    return apiPost('/deltaforceapi.gateway.v1.ApiService/ListMaps', {
-        language, pageSize, pageToken,
-    });
-}
-
-export async function getMap(id, language = DEFAULT_LANGUAGE) {
-    return apiPost('/deltaforceapi.gateway.v1.ApiService/GetMap', { id, language });
-}
-
 // ─── Seasons ─────────────────────────────────────────────
 
-export async function listSeasons({ pageSize = 50, pageToken = '', language = DEFAULT_LANGUAGE } = {}) {
+export async function listSeasons({ pageSize = 50, pageToken = '', language = getApiLanguage() } = {}) {
     return apiPost('/deltaforceapi.gateway.v1.ApiService/ListSeasons', {
         language, pageSize, pageToken,
     });
-}
-
-export async function getSeason(id, language = DEFAULT_LANGUAGE) {
-    return apiPost('/deltaforceapi.gateway.v1.ApiService/GetSeason', { id, language });
-}
-
-export async function getSeasonCurrent(language = DEFAULT_LANGUAGE) {
-    return apiPost('/deltaforceapi.gateway.v1.ApiService/GetSeasonCurrent', { language });
 }
