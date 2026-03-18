@@ -92,4 +92,48 @@ describe('market modal flow', () => {
 
     expect(document.getElementById('modal-overlay')).toBeNull();
   });
+
+  it('ignores late item responses after the modal is closed quickly', async () => {
+    let resolveItemRequest;
+
+    apiMocks.listAuctionItems.mockResolvedValue({
+      items: [
+        { id: 'item-1', name: 'Assault Rifle' },
+      ],
+      nextPageToken: '',
+    });
+    apiMocks.getAuctionItem.mockImplementation(() => new Promise((resolve) => {
+      resolveItemRequest = resolve;
+    }));
+
+    const { renderMarketPage } = await import('../src/pages/market.js');
+    const container = document.getElementById('page-container');
+    renderMarketPage(container);
+
+    await flushUi();
+
+    const firstCard = container.querySelector('.list-item-card');
+    firstCard.click();
+    await Promise.resolve();
+
+    const overlay = document.getElementById('modal-overlay');
+    expect(overlay).not.toBeNull();
+
+    overlay.querySelector('.modal-close').click();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(document.getElementById('modal-overlay')).toBeNull();
+
+    resolveItemRequest({
+      item: {
+        id: 'item-1',
+        name: 'Late Assault Rifle',
+        categoryName: 'Weapon',
+      },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.getElementById('modal-overlay')).toBeNull();
+  });
 });

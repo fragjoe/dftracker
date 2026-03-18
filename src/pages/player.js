@@ -5,8 +5,14 @@ import {
   getPlayerOperationStats,
   listSeasons
 } from '../api/client.js';
+import {
+  persistTrackedPlayerProfile,
+  persistTrackedPlayerStats,
+  persistTrackedPlayerWealth,
+  persistTrackedPlayerWealthHistory,
+} from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
-import { escapeHTML } from '../utils/security.js';
+import { escapeHTML, isAppErrorKind, isRetryableAppError } from '../utils/security.js';
 
 let stashChart = null;
 let scoreBreakdownChart = null;
@@ -33,8 +39,8 @@ const AUTO_SEARCH_DEBOUNCE_MS = {
 const PLAYER_CACHE_MAX_AGE_MS = {
   lookup: 10 * 60 * 1000,
   stats: 45 * 1000,
-  stash: 45 * 1000,
-  history: 45 * 1000,
+  stash: 20 * 60 * 1000,
+  history: 20 * 60 * 1000,
 };
 let chartConstructorPromise = null;
 
@@ -201,14 +207,7 @@ function hasHistoricalStashPayload(response) {
 }
 
 function isRetryablePendingResourceError(error) {
-  const errorMessage = String(error?.message || '').toLowerCase();
-  return errorMessage.includes('404')
-    || errorMessage.includes('not_found')
-    || errorMessage.includes('not found')
-    || errorMessage.includes('data stat kosong')
-    || errorMessage.includes('failed to fetch')
-    || errorMessage.includes('network')
-    || errorMessage.includes('timeout');
+  return isRetryableAppError(error);
 }
 
 async function retryPlayerResource(fetcher, {
@@ -867,6 +866,7 @@ async function loadPlayerData(container, query, { hideSearchOnSuccess = false } 
     localStorage.setItem('lastPlayerQuery', query);
     addRecentSearch(player);
     persistActivePlayerProfile(player);
+    void persistTrackedPlayerProfile(player);
 
     const playerName = player.name || player.deltaForceId || 'Unknown';
     window.updateMetadata({
@@ -1107,6 +1107,13 @@ function renderPlayerProfile(container, player, requestId) {
     if (!preserveContextNote) {
       setStatsContextNote('');
     }
+
+    void persistTrackedPlayerStats({
+      player,
+      seasonId,
+      ranked: modeFilter.value === 'true',
+      stats: response.stats,
+    });
   };
 
   const renderSeasonOptions = (availabilityMap = null) => {
@@ -1156,8 +1163,7 @@ function renderPlayerProfile(container, player, requestId) {
 
         availabilityMap[season.id] = response?.stats ? 'has_data' : 'no_data';
       } catch (error) {
-        const errorMessage = String(error?.message || '').toLowerCase();
-        availabilityMap[season.id] = errorMessage.includes('404') || errorMessage.includes('not_found')
+        availabilityMap[season.id] = isAppErrorKind(error, 'not_found')
           ? 'no_data'
           : 'unknown';
       }
@@ -1178,6 +1184,19 @@ function renderPlayerProfile(container, player, requestId) {
       resourceStatus.style.display = 'block';
       resourceStatus.innerHTML = renderSectionLoadingState({
         message: t('player.statsLoading'),
+        className: '',
+      });
+      startLoadingStateAnimation(resourceStatus);
+      return;
+    }
+
+    if (resourceState.stats === 'pending') {
+      if (statsToolbar) {
+        statsToolbar.style.display = 'flex';
+      }
+      resourceStatus.style.display = 'block';
+      resourceStatus.innerHTML = renderSectionLoadingState({
+        message: t('player.processingNotice'),
         className: '',
       });
       startLoadingStateAnimation(resourceStatus);
@@ -1265,13 +1284,25 @@ function renderPlayerProfile(container, player, requestId) {
       updatePlayerResourceStatus();
     }
 
+    const setStatsPendingState = (noticeMessage = t('player.processingNotice')) => {
+      resourceState.stats = 'pending';
+      statsWrapper.style.display = 'none';
+      statsWrapper.innerHTML = '';
+      setStatsContextNote(noticeMessage);
+      updatePlayerResourceStatus();
+    };
+
     try {
       const res = cachedSeasonEmpty
         ? null
         : await loadStatsResource({
             seasonId,
             ranked,
-            onPending: () => {},
+            onPending: () => {
+              if (!seasonId) {
+                setStatsPendingState();
+              }
+            },
           });
 
       if (isStalePlayerRequest(requestId)) return;
@@ -1288,9 +1319,7 @@ function renderPlayerProfile(container, player, requestId) {
     } catch (err) {
       if (isStalePlayerRequest(requestId)) return;
       console.error('Stats fetch error:', err);
-      const errMsg = err.message || '';
-
-      if (errMsg.includes('404') || errMsg.includes('not_found') || errMsg.includes('Data stat kosong')) {
+      if (isAppErrorKind(err, 'not_found') || isAppErrorKind(err, 'pending')) {
         if (seasonId) {
           availabilityMap[seasonId] = 'no_data';
           seasonAvailabilityCache.set(availabilityCacheKey, availabilityMap);
@@ -1317,7 +1346,9 @@ function renderPlayerProfile(container, player, requestId) {
             const fallbackRes = await loadStatsResource({
               seasonId: '',
               ranked,
-              onPending: () => {},
+              onPending: () => {
+                setStatsPendingState(t('player.processingAllTimeNotice'));
+              },
             });
 
             if (isStalePlayerRequest(requestId)) return;
@@ -1812,10 +1843,11 @@ export async function renderWealthPage(container) {
       if (!resourceStatus) return;
 
       const states = Object.values(resourceState);
+      const hasPending = states.includes('pending');
       const hasLoading = states.includes('loading');
       const hasReady = states.includes('ready');
 
-      if (hasLoading) {
+      if (hasLoading && !hasPending) {
         if (wealthToolbar) {
           wealthToolbar.style.display = 'none';
         }
@@ -1825,6 +1857,26 @@ export async function renderWealthPage(container) {
           className: '',
         });
         startLoadingStateAnimation(resourceStatus);
+        return;
+      }
+
+      if (hasPending) {
+        if (wealthToolbar) {
+          wealthToolbar.style.display = hasReady ? 'flex' : 'none';
+        }
+        resourceStatus.style.display = 'block';
+        resourceStatus.innerHTML = hasReady
+          ? renderSectionEmptyState({
+              message: t('player.wealthPartialNotice'),
+              className: '',
+            })
+          : renderSectionLoadingState({
+              message: t('player.wealthProcessingNotice'),
+              className: '',
+            });
+        if (!hasReady) {
+          startLoadingStateAnimation(resourceStatus);
+        }
         return;
       }
 
@@ -1851,11 +1903,13 @@ export async function renderWealthPage(container) {
     const requestId = ++activePlayerRequestId;
 
     loadStashValue(player.id, requestId, {
+      player,
       stashWrapper,
       resourceState,
       updatePlayerResourceStatus,
     });
     loadStashChart(player.id, requestId, {
+      player,
       historyWrapper,
       resourceState,
       updatePlayerResourceStatus,
@@ -1879,6 +1933,7 @@ export async function renderWealthPage(container) {
 async function loadStashValue(playerId, requestId, controls = {}) {
   const stashWrapper = controls.stashWrapper || document.getElementById('stash-wrapper');
   if (!stashWrapper) return;
+  const player = controls.player || getActivePlayerProfileSummary();
   const resourceState = controls.resourceState || null;
   const updatePlayerResourceStatus = controls.updatePlayerResourceStatus || (() => {});
   const freshStashCache = getFreshCacheEntry(playerStashCache, playerId, PLAYER_CACHE_MAX_AGE_MS.stash);
@@ -1925,7 +1980,7 @@ async function loadStashValue(playerId, requestId, controls = {}) {
       requestId,
       onPending: () => {
         if (!isStalePlayerRequest(requestId) && stashWrapper.isConnected && resourceState) {
-          resourceState.stash = 'loading';
+          resourceState.stash = 'pending';
           updatePlayerResourceStatus();
         }
       },
@@ -1945,6 +2000,10 @@ async function loadStashValue(playerId, requestId, controls = {}) {
         resourceState.stash = 'ready';
         updatePlayerResourceStatus();
       }
+      void persistTrackedPlayerWealth({
+        player,
+        stash: result.stash,
+      });
     } else {
       setCacheEntry(playerStashCache, playerId, { status: 'empty' });
       setWealthLastUpdate('');
@@ -2000,6 +2059,7 @@ async function resolveActivePlayerForSharedPages() {
 async function loadStashChart(playerId, requestId, controls = {}) {
   const historyWrapper = controls.historyWrapper || document.getElementById('stash-history-wrapper');
   if (!historyWrapper) return;
+  const player = controls.player || getActivePlayerProfileSummary();
   const resourceState = controls.resourceState || null;
   const updatePlayerResourceStatus = controls.updatePlayerResourceStatus || (() => {});
   const freshHistoryCache = getFreshCacheEntry(playerHistoryCache, playerId, PLAYER_CACHE_MAX_AGE_MS.history);
@@ -2055,7 +2115,7 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       requestId,
       onPending: () => {
         if (!isStalePlayerRequest(requestId) && historyWrapper.isConnected && resourceState) {
-          resourceState.history = 'loading';
+          resourceState.history = 'pending';
           updatePlayerResourceStatus();
         }
       },
@@ -2092,6 +2152,10 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       resourceState.history = 'ready';
       updatePlayerResourceStatus();
     }
+    void persistTrackedPlayerWealthHistory({
+      player,
+      history: allSeries,
+    });
   } catch (err) {
     console.error('Stash chart error:', err);
     if (!historyWrapper.isConnected || isStalePlayerRequest(requestId)) return;

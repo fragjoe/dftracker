@@ -146,6 +146,16 @@ const routes = [
     metaDescriptionKey: 'routes.wealth.description',
   },
   {
+    path: '/leaderboard',
+    render: async (container) => {
+      const { renderLeaderboardPage } = await import('./pages/leaderboard.js');
+      return renderLeaderboardPage(container);
+    },
+    label: 'Leaderboard',
+    metaTitleKey: 'routes.leaderboard.title',
+    metaDescriptionKey: 'routes.leaderboard.description',
+  },
+  {
     path: '/privacy',
     render: async (container) => {
       const { renderPrivacyPage } = await import('./pages/info.js');
@@ -226,11 +236,11 @@ function router() {
 function updateStaticLanguageUI() {
   document.getElementById('nav-player-label').innerText = t('nav.player');
   document.getElementById('nav-wealth-label').innerText = t('nav.wealth');
+  document.getElementById('nav-leaderboard-label').innerText = t('nav.leaderboard');
   document.getElementById('nav-market-label').innerText = t('nav.market');
   document.getElementById('footer-privacy-link').innerText = t('footer.privacy');
   document.getElementById('footer-terms-link').innerText = t('footer.terms');
   document.getElementById('footer-support-link').innerText = t('footer.support');
-  document.getElementById('api-status-text').innerText = t('app.apiStatus');
   const storageNoticeText = document.getElementById('storage-notice-text');
   const storageNoticeLink = document.getElementById('storage-notice-link');
   const storageNoticeDismiss = document.getElementById('storage-notice-dismiss');

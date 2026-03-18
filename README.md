@@ -204,6 +204,43 @@ Cek lengkap:
 npm run check
 ```
 
+## Local Player Storage
+
+Project ini sekarang punya storage API lokal berbasis SQLite untuk menyimpan:
+
+- profil player yang pernah dicari
+- snapshot stats per `seasonId` dan mode ranked
+- snapshot wealth summary
+- snapshot wealth history
+
+Storage ini disiapkan sebagai fondasi untuk fitur berikutnya seperti leaderboard.
+
+Jalankan mode development:
+
+```bash
+npm run dev
+```
+
+Ini akan menyalakan:
+
+- frontend Vite
+- storage API lokal di `http://localhost:3001`
+
+File database SQLite disimpan di:
+
+```text
+.data/dftracker.sqlite
+```
+
+Endpoint dasar yang sudah tersedia:
+
+- `GET /tracker-api/health`
+- `GET /tracker-api/leaderboard`
+- `POST /tracker-api/players/sync-profile`
+- `POST /tracker-api/players/sync-stats`
+- `POST /tracker-api/players/sync-wealth`
+- `POST /tracker-api/players/sync-wealth-history`
+
 ## Local Development
 
 Install dependency:

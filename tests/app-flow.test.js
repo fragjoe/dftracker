@@ -94,7 +94,6 @@ function mountShell() {
             </div>
             <div class="api-status">
               <span class="status-dot"></span>
-              <span class="status-text" id="api-status-text">Online</span>
             </div>
           </div>
           <nav class="nav" id="nav">

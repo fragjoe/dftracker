@@ -20,6 +20,7 @@ let lastKnownBenchmarkLabel = t('market.benchmarkPrice', { range: t('market.rang
 const marketItemDetailsCache = new Map();
 const MARKET_SEARCH_DEBOUNCE_MS = 280;
 let chartConstructorPromise = null;
+let activeMarketDetailViewId = 0;
 
 async function getChartConstructor() {
   if (!chartConstructorPromise) {
@@ -390,11 +391,33 @@ function openMarketItemOverlay(itemId) {
   if (window.lucide) window.lucide.createIcons();
 }
 
+function createMarketDetailViewState(container, itemId, showBackButton) {
+  return {
+    container,
+    itemId,
+    showBackButton,
+    viewId: ++activeMarketDetailViewId,
+  };
+}
+
+function isActiveMarketDetailView(viewState) {
+  if (!viewState?.container?.isConnected) return false;
+  if (viewState.container.dataset.marketViewId !== String(viewState.viewId)) return false;
+  return activeMarketDetailViewId === viewState.viewId;
+}
+
+function getViewElement(viewState, selector) {
+  if (!isActiveMarketDetailView(viewState)) return null;
+  return viewState.container.querySelector(selector);
+}
+
 export async function renderMarketItemPage(container, itemId) {
   return renderMarketItemView(container, itemId, { showBackButton: true });
 }
 
 async function renderMarketItemView(container, itemId, { showBackButton = true } = {}) {
+  const viewState = createMarketDetailViewState(container, itemId, showBackButton);
+  container.dataset.marketViewId = String(viewState.viewId);
   container.innerHTML = `
     <div class="item-detail-header">
       ${showBackButton ? `
@@ -478,11 +501,15 @@ async function renderMarketItemView(container, itemId, { showBackButton = true }
 
   try {
     const data = await getAuctionItem(itemId, getMarketApiLanguage());
+    if (!isActiveMarketDetailView(viewState)) return;
     const item = data.item || data;
 
     const itemName = item.name || item.langEn || 'Unknown';
-    document.getElementById('page-item-name').innerText = escapeHTML(itemName);
-    document.getElementById('page-item-category').innerText = escapeHTML(item.categoryName || item.category || t('market.itemType'));
+    const itemNameEl = getViewElement(viewState, '#page-item-name');
+    const itemCategoryEl = getViewElement(viewState, '#page-item-category');
+    if (!itemNameEl || !itemCategoryEl) return;
+    itemNameEl.innerText = itemName;
+    itemCategoryEl.innerText = item.categoryName || item.category || t('market.itemType');
 
     if (showBackButton) {
       window.updateMetadata({
@@ -492,27 +519,32 @@ async function renderMarketItemView(container, itemId, { showBackButton = true }
     }
 
     // Load chart data
-    loadPriceChart(itemId, 1);
-    loadRecentPrices(itemId);
+    void loadPriceChart(viewState, 1);
+    void loadRecentPrices(viewState);
 
     // Range selector handlers
-    document.getElementById('chart-range-selector').addEventListener('click', (e) => {
+    const rangeSelector = getViewElement(viewState, '#chart-range-selector');
+    rangeSelector?.addEventListener('click', (e) => {
+      if (!isActiveMarketDetailView(viewState)) return;
       const btn = e.target.closest('.range-btn');
       if (!btn) return;
-      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      rangeSelector.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const days = parseInt(btn.dataset.days);
-      loadPriceChart(itemId, days);
+      void loadPriceChart(viewState, days);
     });
   } catch (err) {
+    if (!isActiveMarketDetailView(viewState)) return;
     console.error('Failed to load item:', err);
     container.innerHTML = `<div class="empty-state">${t('market.loadErrorTitle')}: ${err.message}</div>`;
   }
 }
 
-async function loadPriceChart(itemId, days = 1) {
-  const chartLoading = document.getElementById('chart-loading');
-  const canvas = document.getElementById('price-chart');
+async function loadPriceChart(viewState, days = 1) {
+  const itemId = viewState.itemId;
+  const chartLoading = getViewElement(viewState, '#chart-loading');
+  const canvas = getViewElement(viewState, '#price-chart');
+  if (!chartLoading || !canvas) return;
 
   chartLoading.style.display = 'flex';
   chartLoading.innerHTML = `<div class="spinner"></div><span class="loading-text" style="margin-left: 12px">${t('market.chartLoading')}</span>`;
@@ -532,14 +564,19 @@ async function loadPriceChart(itemId, days = 1) {
       interval: interval,
       language: getMarketApiLanguage(),
     });
+    if (!isActiveMarketDetailView(viewState)) return;
 
-    chartLoading.style.display = 'none';
+    const refreshedChartLoading = getViewElement(viewState, '#chart-loading');
+    const refreshedCanvas = getViewElement(viewState, '#price-chart');
+    if (!refreshedChartLoading || !refreshedCanvas) return;
+
+    refreshedChartLoading.style.display = 'none';
 
     const marketSeries = marketData.priceSeries || marketData.series || marketData.prices || [];
 
     if (marketSeries.length === 0) {
-      chartLoading.style.display = 'flex';
-      chartLoading.innerHTML = `<span class="text-muted">${t('market.chartEmpty')}</span>`;
+      refreshedChartLoading.style.display = 'flex';
+      refreshedChartLoading.innerHTML = `<span class="text-muted">${t('market.chartEmpty')}</span>`;
       updateMarketRangeStats(days, null);
       return;
     }
@@ -565,12 +602,13 @@ async function loadPriceChart(itemId, days = 1) {
 
     if (currentChart) currentChart.destroy();
 
-    const ctx = canvas.getContext('2d');
+    const ctx = refreshedCanvas.getContext('2d');
+    if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, 300);
     gradient.addColorStop(0, 'rgba(96, 165, 250, 0.22)');
     gradient.addColorStop(1, 'rgba(96, 165, 250, 0)');
 
-    currentChart = new Chart(canvas, {
+    currentChart = new Chart(refreshedCanvas, {
       type: 'line',
       data: {
         labels,
@@ -702,21 +740,28 @@ async function loadPriceChart(itemId, days = 1) {
       },
     });
   } catch (err) {
+    if (!isActiveMarketDetailView(viewState)) return;
     console.error('Price chart error:', err);
-    chartLoading.innerHTML = `<span class="text-muted">⚠️ ${t('market.chartError')}</span>`;
+    const refreshedChartLoading = getViewElement(viewState, '#chart-loading');
+    if (refreshedChartLoading) {
+      refreshedChartLoading.innerHTML = `<span class="text-muted">⚠️ ${t('market.chartError')}</span>`;
+    }
     updateMarketRangeStats(days, null);
   }
 }
 
-async function loadRecentPrices(itemId) {
+async function loadRecentPrices(viewState) {
   try {
+    const itemId = viewState.itemId;
     const latestPrice = await getLatestMarketSnapshot(itemId);
+    if (!isActiveMarketDetailView(viewState)) return;
     lastKnownCurrentPrice = Number(latestPrice.price || 0);
     updatePriceTrend();
 
   } catch (err) {
+    if (!isActiveMarketDetailView(viewState)) return;
     console.error('Recent prices error:', err);
-    const curEl = document.getElementById('modal-current-price');
+    const curEl = getViewElement(viewState, '#modal-current-price');
     if (curEl) curEl.innerHTML = `<span class="text-red">${t('market.loadErrorTitle')}</span>`;
   }
 }

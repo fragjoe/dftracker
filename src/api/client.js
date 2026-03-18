@@ -3,7 +3,7 @@
  * Wrapper for the Connect Protocol API at https://api.deltaforceapi.com
  */
 
-import { sanitizeError } from '../utils/security.js';
+import { classifyAppError, sanitizeError } from '../utils/security.js';
 import { getApiLanguage } from '../i18n.js';
 
 const BASE_URL = '/api';
@@ -35,7 +35,9 @@ async function apiPost(endpoint, body = {}) {
 
         return await res.json();
     } catch (err) {
-        throw new Error(sanitizeError(err), { cause: err });
+        const wrappedError = new Error(sanitizeError(err), { cause: err });
+        wrappedError.errorKind = classifyAppError(err);
+        throw wrappedError;
     }
 }
 

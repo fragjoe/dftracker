@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n web,api -c green,blue \"npm:dev:web\" \"npm:dev:api\"",
+    "dev:web": "vite",
+    "dev:api": "node server/index.js",
     "build": "vite build",
     "preview": "vite preview",
+    "start:api": "node server/index.js",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.js",
     "test:watch": "vitest --config vitest.config.js",
@@ -14,6 +17,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "concurrently": "^9.2.1",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "jsdom": "^29.0.0",

@@ -174,4 +174,84 @@ describe('player smoke flows', () => {
     expect(container.querySelector('#stats-context-note').textContent).toContain('Showing All Time automatically');
     expect(container.querySelector('#stats-wrapper').textContent).toContain('222');
   });
+
+  it('falls back to All Time when the active season returns a localized not-found message', async () => {
+    localStorage.setItem('app_language', 'id');
+
+    apiMocks.listSeasons.mockResolvedValue({
+      seasons: [
+        { id: 'season-8', number: 8, name: 'Morphosis', active: true },
+      ],
+    });
+    apiMocks.getPlayer.mockResolvedValue({
+      player: {
+        id: 'player-3',
+        deltaForceId: '81060706959165920074',
+        name: 'Varchelist',
+        levelOperations: 47,
+        registeredAt: '2026-03-14T05:41:53Z',
+      },
+    });
+    apiMocks.getPlayerOperationStats.mockImplementation(async (_playerId, { seasonId = '' } = {}) => {
+      if (seasonId === 'season-8') {
+        throw new Error('Data tidak ditemukan. Silakan periksa kembali ID atau filter pencarian Anda.');
+      }
+
+      return {
+        stats: buildPlayerStats({ totalKills: 333 }),
+      };
+    });
+
+    const { renderPlayerPage } = await import('../src/pages/player.js');
+    const container = document.getElementById('page-container');
+    await renderPlayerPage(container);
+
+    const searchInput = container.querySelector('#player-search');
+    searchInput.value = 'Varchelist';
+    searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await flushUi();
+
+    expect(container.querySelector('#season-filter').value).toBe('');
+    expect(container.querySelector('#stats-context-note').textContent).toContain('Menampilkan Seluruh Waktu secara otomatis');
+    expect(container.querySelector('#stats-wrapper').textContent).toContain('333');
+  });
+
+  it('retries wealth loading when the API returns a localized network error first', async () => {
+    localStorage.setItem('app_language', 'id');
+    localStorage.setItem('active_player_profile', JSON.stringify({
+      id: 'player-wealth',
+      deltaForceId: '81060706959165920074',
+      name: 'Varchelist',
+      levelOperations: 47,
+      registeredAt: '2026-03-14T05:41:53Z',
+    }));
+
+    apiMocks.getPlayerOperationStashValue
+      .mockRejectedValueOnce(new Error('Gagal terhubung ke layanan. Periksa koneksi internet Anda atau coba lagi nanti.'))
+      .mockResolvedValueOnce({
+        stash: {
+          updatedAt: '2026-03-16T14:13:37.878976Z',
+          assetsLiquid: 400000,
+          assetsFixed: 1200000,
+          assetsCollection: 800000,
+          assetsNet: 2400000,
+        },
+      });
+    apiMocks.getPlayerOperationHistoricalStashValue.mockResolvedValue({
+      historicalStashValues: [
+        { time: '2026-03-15T10:00:00Z', assetsNet: 2000000 },
+        { time: '2026-03-16T10:00:00Z', assetsNet: 2400000 },
+      ],
+    });
+
+    const { renderWealthPage } = await import('../src/pages/player.js');
+    const container = document.getElementById('page-container');
+    await renderWealthPage(container);
+
+    await flushUi();
+
+    expect(apiMocks.getPlayerOperationStashValue).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('Net Worth');
+  });
 });
