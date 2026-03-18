@@ -27,6 +27,7 @@ import {
   Info,
   LineChart,
   Loader,
+  Minus,
   Package,
   PackageSearch,
   PersonStanding,
@@ -47,12 +48,19 @@ import {
   X,
   createIcons,
 } from 'lucide';
+import { listSeasons } from './api/client.js';
 import { clearActivePlayerContext, getActivePlayerProfileSummary, renderPlayerPage, renderWealthPage } from './pages/player.js';
-import { getCurrentLanguage, getLanguageOptions, initializeLanguage, setCurrentLanguage, t } from './i18n.js';
-import { escapeHTML } from './utils/security.js';
+import { getCurrentLanguage, getLanguageOptions, initializeLanguage, setCurrentLanguage, t, tForLanguage } from './i18n.js';
+import { escapeHTML, isAppErrorKind } from './utils/security.js';
 
 const STORAGE_NOTICE_KEY = 'storage_notice_acknowledged';
 let activeRenderRequestId = 0;
+let appMaintenanceActive = false;
+let maintenanceAnimationInterval = null;
+let maintenanceTypingTimeout = null;
+const MAINTENANCE_CYCLE_MS = 3600;
+const MAINTENANCE_TYPING_STEP_MS = 55;
+const MAINTENANCE_HOLD_MS = 700;
 
 const APP_ICONS = {
   AlertTriangle,
@@ -78,6 +86,7 @@ const APP_ICONS = {
   Info,
   LineChart,
   Loader,
+  Minus,
   Package,
   PackageSearch,
   PersonStanding,
@@ -197,10 +206,167 @@ const routes = [
   },
 ];
 
+function renderMaintenancePage() {
+  const container = document.getElementById('page-container');
+  if (!container) return;
+
+  if (maintenanceAnimationInterval) {
+    window.clearInterval(maintenanceAnimationInterval);
+    maintenanceAnimationInterval = null;
+  }
+  if (maintenanceTypingTimeout) {
+    window.clearTimeout(maintenanceTypingTimeout);
+    maintenanceTypingTimeout = null;
+  }
+
+  const languageOrder = getLanguageOptions().map(({ value }) => value);
+  const activeLanguage = getCurrentLanguage();
+  const orderedLanguages = [
+    activeLanguage,
+    ...languageOrder.filter((value) => value !== activeLanguage),
+  ];
+  const titlePhrases = orderedLanguages.map((language) => tForLanguage(language, 'app.maintenance.shortTitle'));
+  const messagePhrases = orderedLanguages.map((language) => tForLanguage(language, 'app.maintenance.shortMessage'));
+
+  window.updateMetadata({
+    title: t('app.maintenance.title'),
+    description: t('app.maintenance.message'),
+  });
+
+  container.innerHTML = `
+    <section class="maintenance-shell" aria-live="polite">
+      <div class="maintenance-card">
+        <h1 class="maintenance-title">
+          <span id="maintenance-title-text" class="maintenance-title-text"></span>
+          <span class="maintenance-caret" aria-hidden="true"></span>
+        </h1>
+        <div class="maintenance-message-shell">
+          <p id="maintenance-message-text" class="maintenance-message" data-roll-state="enter"></p>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const titleEl = document.getElementById('maintenance-title-text');
+  const messageEl = document.getElementById('maintenance-message-text');
+  if (!titleEl || !messageEl) return;
+
+  const typeAndDeleteTitle = (text) => {
+    if (maintenanceTypingTimeout) {
+      window.clearTimeout(maintenanceTypingTimeout);
+      maintenanceTypingTimeout = null;
+    }
+
+    const maxChars = Math.max(text.length, 1);
+    const totalTypingBudget = Math.max(MAINTENANCE_CYCLE_MS - (MAINTENANCE_HOLD_MS * 2), MAINTENANCE_TYPING_STEP_MS * 2);
+    const stepMs = Math.max(28, Math.floor(totalTypingBudget / (maxChars * 2)));
+    let phase = 'typing';
+    let index = 0;
+
+    const tick = () => {
+      if (!titleEl.isConnected || !appMaintenanceActive) return;
+
+      if (phase === 'typing') {
+        index += 1;
+        titleEl.textContent = text.slice(0, index);
+        if (index >= text.length) {
+          phase = 'hold_full';
+          maintenanceTypingTimeout = window.setTimeout(tick, MAINTENANCE_HOLD_MS);
+          return;
+        }
+        maintenanceTypingTimeout = window.setTimeout(tick, stepMs);
+        return;
+      }
+
+      if (phase === 'hold_full') {
+        phase = 'deleting';
+        maintenanceTypingTimeout = window.setTimeout(tick, stepMs);
+        return;
+      }
+
+      if (phase === 'deleting') {
+        index -= 1;
+        titleEl.textContent = text.slice(0, Math.max(0, index));
+        if (index <= 0) {
+          phase = 'hold_empty';
+          maintenanceTypingTimeout = window.setTimeout(tick, MAINTENANCE_HOLD_MS);
+          return;
+        }
+        maintenanceTypingTimeout = window.setTimeout(tick, stepMs);
+      }
+    };
+
+    titleEl.textContent = '';
+    tick();
+  };
+
+  const updateMessage = (text) => {
+    messageEl.setAttribute('data-roll-state', 'exit');
+    window.setTimeout(() => {
+      if (!messageEl.isConnected || !appMaintenanceActive) return;
+      messageEl.textContent = text;
+      messageEl.setAttribute('data-roll-state', 'enter');
+    }, 220);
+  };
+
+  let phraseIndex = 0;
+  typeAndDeleteTitle(titlePhrases[phraseIndex]);
+  messageEl.textContent = messagePhrases[phraseIndex];
+  messageEl.setAttribute('data-roll-state', 'enter');
+
+  maintenanceAnimationInterval = window.setInterval(() => {
+    if (!appMaintenanceActive) return;
+    phraseIndex = (phraseIndex + 1) % titlePhrases.length;
+    typeAndDeleteTitle(titlePhrases[phraseIndex]);
+    updateMessage(messagePhrases[phraseIndex]);
+  }, MAINTENANCE_CYCLE_MS);
+}
+
+function updateAppShellForMaintenance() {
+  const app = document.getElementById('app');
+  const header = document.getElementById('header');
+  const footer = document.querySelector('.footer');
+  if (app) {
+    app.classList.toggle('app--maintenance', appMaintenanceActive);
+  }
+  if (header) {
+    header.classList.toggle('hidden', appMaintenanceActive);
+  }
+  if (footer) {
+    footer.classList.toggle('hidden', appMaintenanceActive);
+  }
+}
+
+function activateGlobalMaintenanceMode() {
+  appMaintenanceActive = true;
+  updateAppShellForMaintenance();
+  updateStorageNoticeVisibility();
+  renderMaintenancePage();
+}
+
+async function verifyGlobalMaintenanceStatus() {
+  try {
+    await listSeasons({ pageSize: 1 });
+    return false;
+  } catch (error) {
+    if (isAppErrorKind(error, 'maintenance')) {
+      activateGlobalMaintenanceMode();
+      return true;
+    }
+    return false;
+  }
+}
+
 /**
  * Main router function
  */
 function router() {
+  if (appMaintenanceActive) {
+    updateAppShellForMaintenance();
+    renderMaintenancePage();
+    return;
+  }
+
   const path = window.location.pathname === '/' ? '/player' : window.location.pathname;
   const container = document.getElementById('page-container');
 
@@ -282,6 +448,11 @@ function updateStaticLanguageUI() {
 function updateStorageNoticeVisibility() {
   const storageNotice = document.getElementById('storage-notice');
   if (!storageNotice) return;
+
+  if (appMaintenanceActive) {
+    storageNotice.classList.add('hidden');
+    return;
+  }
 
   const isDismissed = localStorage.getItem(STORAGE_NOTICE_KEY) === 'true';
   storageNotice.classList.toggle('hidden', isDismissed);
@@ -505,6 +676,15 @@ async function closeMarketItemOverlay() {
 
 // Global click interceptor for Clean URLs
 document.addEventListener('click', (e) => {
+  if (appMaintenanceActive) {
+    const link = e.target.closest('a');
+    if (link && link.href && link.href.startsWith(window.location.origin) && !link.target && !link.hasAttribute('download')) {
+      e.preventDefault();
+      router();
+      return;
+    }
+  }
+
   const languageDropdown = document.getElementById('language-dropdown');
   const playerDropdown = document.getElementById('player-dropdown');
   const languageOption = e.target.closest('[data-language-option]');
@@ -616,6 +796,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initializeLanguage();
   updateStaticLanguageUI();
   updateStorageNoticeVisibility();
+  updateAppShellForMaintenance();
 
   window.addEventListener('app:language-change', () => {
     toggleLanguageMenu(false);
@@ -625,6 +806,10 @@ window.addEventListener('DOMContentLoaded', () => {
     router();
   });
 
+  window.addEventListener('app:maintenance-detected', () => {
+    activateGlobalMaintenanceMode();
+  });
+
   window.addEventListener('app:active-player-change', () => {
     renderActivePlayerHeader();
     if (window.lucide) {
@@ -632,5 +817,9 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  router();
+  verifyGlobalMaintenanceStatus().then((isMaintenance) => {
+    if (!isMaintenance) {
+      router();
+    }
+  });
 });

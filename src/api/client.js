@@ -37,6 +37,13 @@ async function apiPost(endpoint, body = {}) {
     } catch (err) {
         const wrappedError = new Error(sanitizeError(err), { cause: err });
         wrappedError.errorKind = classifyAppError(err);
+        if (wrappedError.errorKind === 'maintenance' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('app:maintenance-detected', {
+                detail: {
+                    endpoint,
+                },
+            }));
+        }
         throw wrappedError;
     }
 }

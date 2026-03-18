@@ -15,7 +15,15 @@ const dictionaries = {
       errors: {
         notFound: 'Data tidak ditemukan. Silakan periksa kembali ID atau filter pencarian Anda.',
         network: 'Gagal terhubung ke layanan. Periksa koneksi internet Anda atau coba lagi nanti.',
+        maintenance: 'Layanan API Delta Force sedang maintenance atau mengalami gangguan sementara.',
         system: 'Terjadi kesalahan sistem saat mengambil data.',
+      },
+      maintenance: {
+        title: 'DFtracker Sedang Maintenance',
+        message: 'Layanan Delta Force API sedang mengalami gangguan, jadi seluruh fitur DFtracker kami nonaktifkan sementara agar pengguna tidak menerima data yang keliru atau kosong.',
+        hint: 'Silakan coba kembali beberapa menit lagi.',
+        shortTitle: 'Dalam Perawatan',
+        shortMessage: 'Kami akan segera kembali',
       },
     },
     nav: {
@@ -85,6 +93,8 @@ const dictionaries = {
       notFoundHint: 'Nama pemain atau UUID tersebut tidak ditemukan dalam data yang tersedia saat ini.',
       errorTitle: 'Gagal memuat data pemain',
       errorHint: 'Terjadi kesalahan saat mengambil data. Silakan coba lagi sebentar lagi.',
+      maintenanceTitle: 'API Sedang Maintenance',
+      maintenanceHint: 'Layanan statistik Delta Force sedang bermasalah sementara. Coba lagi beberapa menit lagi.',
       clearActivePlayer: 'Hapus player aktif',
       uuidLabel: 'ID Player',
       copyUuid: 'Salin ID',
@@ -227,11 +237,14 @@ const dictionaries = {
     leaderboard: {
       title: 'Leaderboard',
       eyebrow: 'Indexed Player Ranking',
-      subtitle: 'Peringkat internal DFtracker dari player yang pernah diindeks lewat pencarian Stats dan Wealth.',
+      subtitle: 'Peringkat internal DFtracker berdasarkan data player dari pencarian Stats dan Wealth.',
       indexedTitle: 'Leaderboard berbasis player terindeks',
       indexedHint: 'Daftar ini hanya menampilkan player yang sudah pernah dicari dan berhasil disimpan di DFtracker. Data akan bertambah seiring indexing berjalan.',
       liveBadge: 'Indexed Live',
       filtersTitle: 'Filter Ranking',
+      searchPlaceholder: 'Cari player di leaderboard...',
+      noSearchResults: 'Player tidak ditemukan untuk kata kunci ini',
+      noSearchResultsHint: 'Coba kata kunci lain, Delta Force ID, atau reset filter season/mode.',
       loading: 'Memuat leaderboard...',
       lastSync: 'Sinkronisasi terbaru',
       emptyTitle: 'Leaderboard belum punya data',
@@ -248,6 +261,15 @@ const dictionaries = {
         metric: 'Metric Aktif',
         scope: 'Scope Ranking',
       },
+      table: {
+        rank: '#',
+        player: 'Player',
+        id: 'ID',
+        level: 'Level',
+        change: 'Perubahan',
+        action: 'Aksi',
+        open: 'Buka',
+      },
       metrics: {
         rankedPoints: 'Poin Ranked',
         kdRatio: 'Rasio K/D',
@@ -256,6 +278,13 @@ const dictionaries = {
         matchesPlayed: 'Pertandingan',
         playTime: 'Waktu Bermain',
         extractedAssets: 'Aset Diekstrak',
+      },
+      rank: {
+        up: '+{value}',
+        down: '-{value}',
+        new: 'Baru',
+        same: '=',
+        sameTitle: 'Posisi tetap',
       },
     },
     info: {
@@ -296,7 +325,15 @@ const dictionaries = {
       errors: {
         notFound: 'Data could not be found. Please check the ID or search filter and try again.',
         network: 'Unable to reach the service. Check your internet connection or try again later.',
+        maintenance: 'The Delta Force API is under maintenance or temporarily unavailable.',
         system: 'A system error occurred while loading data.',
+      },
+      maintenance: {
+        title: 'DFtracker Is Under Maintenance',
+        message: 'The Delta Force API is currently experiencing issues, so DFtracker features are temporarily disabled to avoid showing empty or misleading data.',
+        hint: 'Please check back again in a few minutes.',
+        shortTitle: 'Under Maintenance',
+        shortMessage: 'We will be comeback',
       },
     },
     nav: {
@@ -366,6 +403,8 @@ const dictionaries = {
       notFoundHint: 'That player name or UUID could not be found in the currently available data.',
       errorTitle: 'Failed to load player data',
       errorHint: 'An error occurred while loading data. Please try again shortly.',
+      maintenanceTitle: 'API Under Maintenance',
+      maintenanceHint: 'The Delta Force stats service is temporarily unavailable. Please try again in a few minutes.',
       clearActivePlayer: 'Clear active player',
       uuidLabel: 'Player ID',
       copyUuid: 'Copy ID',
@@ -513,6 +552,9 @@ const dictionaries = {
       indexedHint: 'This list only includes players who have already been searched and stored by DFtracker. It grows as more players get indexed.',
       liveBadge: 'Indexed Live',
       filtersTitle: 'Ranking Filters',
+      searchPlaceholder: 'Search player in leaderboard...',
+      noSearchResults: 'No player matches this keyword',
+      noSearchResultsHint: 'Try another keyword, Delta Force ID, or reset season/mode filters.',
       loading: 'Loading leaderboard...',
       lastSync: 'Latest sync',
       emptyTitle: 'No leaderboard data yet',
@@ -529,6 +571,15 @@ const dictionaries = {
         metric: 'Active Metric',
         scope: 'Ranking Scope',
       },
+      table: {
+        rank: '#',
+        player: 'Player',
+        id: 'ID',
+        level: 'Level',
+        change: 'Change',
+        action: 'Action',
+        open: 'Open',
+      },
       metrics: {
         rankedPoints: 'Ranked Points',
         kdRatio: 'K/D Ratio',
@@ -537,6 +588,13 @@ const dictionaries = {
         matchesPlayed: 'Matches Played',
         playTime: 'Play Time',
         extractedAssets: 'Extracted Assets',
+      },
+      rank: {
+        up: '+{value}',
+        down: '-{value}',
+        new: 'New',
+        same: '=',
+        sameTitle: 'No rank change',
       },
     },
     info: {
@@ -577,7 +635,15 @@ const dictionaries = {
       errors: {
         notFound: '未找到数据。请检查 ID 或搜索筛选条件后重试。',
         network: '无法连接到服务。请检查网络连接或稍后再试。',
+        maintenance: 'Delta Force API 正在维护中或暂时不可用。',
         system: '加载数据时发生系统错误。',
+      },
+      maintenance: {
+        title: 'DFtracker 维护中',
+        message: 'Delta Force API 当前出现异常，因此 DFtracker 已暂时关闭全部功能，以避免向用户显示空数据或不准确的数据。',
+        hint: '请稍后几分钟再试。',
+        shortTitle: '维护中',
+        shortMessage: '我们很快回来',
       },
     },
     nav: {
@@ -647,6 +713,8 @@ const dictionaries = {
       notFoundHint: '当前可用数据中未找到该玩家名称或 UUID。',
       errorTitle: '加载玩家数据失败',
       errorHint: '加载数据时发生错误，请稍后再试。',
+      maintenanceTitle: 'API 维护中',
+      maintenanceHint: 'Delta Force 数据服务暂时不可用，请稍后几分钟再试。',
       clearActivePlayer: '清除当前玩家',
       uuidLabel: '玩家 ID',
       copyUuid: '复制 ID',
@@ -794,6 +862,9 @@ const dictionaries = {
       indexedHint: '这里只显示已经被搜索并成功保存到 DFtracker 的玩家。随着索引增加，排行榜会持续扩展。',
       liveBadge: 'Indexed Live',
       filtersTitle: '排行筛选',
+      searchPlaceholder: '在排行榜中搜索玩家...',
+      noSearchResults: '没有匹配该关键词的玩家',
+      noSearchResultsHint: '请尝试其他关键词、Delta Force ID，或重置赛季与模式筛选。',
       loading: '正在加载排行榜...',
       lastSync: '最近同步',
       emptyTitle: '排行榜还没有数据',
@@ -810,6 +881,15 @@ const dictionaries = {
         metric: '当前指标',
         scope: '排行范围',
       },
+      table: {
+        rank: '#',
+        player: '玩家',
+        id: 'ID',
+        level: '等级',
+        change: '变化',
+        action: '操作',
+        open: '打开',
+      },
       metrics: {
         rankedPoints: '排位分',
         kdRatio: 'K/D 比率',
@@ -818,6 +898,13 @@ const dictionaries = {
         matchesPlayed: '对局数',
         playTime: '游戏时长',
         extractedAssets: '撤离资产',
+      },
+      rank: {
+        up: '+{value}',
+        down: '-{value}',
+        new: '新上榜',
+        same: '=',
+        sameTitle: '排名不变',
       },
     },
     info: {
@@ -894,6 +981,10 @@ export function initializeLanguage() {
 
 export function t(path, params = {}) {
   const language = getCurrentLanguage();
+  return tForLanguage(language, path, params);
+}
+
+export function tForLanguage(language, path, params = {}) {
   const localizedValue = getValueByPath(dictionaries[language], path);
   const fallbackValue = getValueByPath(dictionaries.id, path);
   const resolvedValue = localizedValue ?? fallbackValue ?? path;

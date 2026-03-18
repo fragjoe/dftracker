@@ -2,6 +2,7 @@ import http from 'node:http';
 import { getLeaderboard, getTrackerSummary, savePlayerStatsSnapshot, savePlayerWealthHistorySnapshot, savePlayerWealthSnapshot, upsertPlayer } from './db.js';
 
 const PORT = Number(process.env.DFTRACKER_API_PORT || 3001);
+const HOST = process.env.DFTRACKER_API_HOST || '127.0.0.1';
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -120,6 +121,6 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`DFtracker storage API listening on http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`DFtracker storage API listening on http://${HOST}:${PORT}`);
 });

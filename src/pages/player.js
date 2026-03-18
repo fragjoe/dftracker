@@ -892,6 +892,9 @@ async function loadPlayerData(container, query, { hideSearchOnSuccess = false } 
       errorTitle = t('player.notFoundTitle');
       errorHint = t('player.notFoundHint');
       errorIcon = 'user-search';
+    } else if (isAppErrorKind(err, 'maintenance')) {
+      errorTitle = t('player.maintenanceTitle');
+      errorHint = t('player.maintenanceHint');
     }
 
     container.querySelector('#player-search-shell')?.classList.remove('hidden');
@@ -1203,6 +1206,18 @@ function renderPlayerProfile(container, player, requestId) {
       return;
     }
 
+    if (resourceState.stats === 'maintenance') {
+      if (statsToolbar) {
+        statsToolbar.style.display = 'flex';
+      }
+      resourceStatus.style.display = 'block';
+      resourceStatus.innerHTML = renderSectionEmptyState({
+        message: t('player.maintenanceHint'),
+        className: '',
+      });
+      return;
+    }
+
     if (resourceState.stats !== 'ready') {
       if (statsToolbar) {
         statsToolbar.style.display = 'flex';
@@ -1377,6 +1392,15 @@ function renderPlayerProfile(container, player, requestId) {
         statsWrapper.innerHTML = '';
         updatePlayerResourceStatus();
       } else {
+        if (isAppErrorKind(err, 'maintenance')) {
+          setStatsContextNote(t('player.maintenanceHint'));
+          resourceState.stats = 'maintenance';
+          statsWrapper.style.display = 'none';
+          statsWrapper.innerHTML = '';
+          updatePlayerResourceStatus();
+          return;
+        }
+
         setStatsContextNote('');
         resourceState.stats = 'empty';
         statsWrapper.style.display = 'none';
@@ -1846,6 +1870,7 @@ export async function renderWealthPage(container) {
       const hasPending = states.includes('pending');
       const hasLoading = states.includes('loading');
       const hasReady = states.includes('ready');
+      const hasMaintenance = states.includes('maintenance');
 
       if (hasLoading && !hasPending) {
         if (wealthToolbar) {
@@ -1877,6 +1902,18 @@ export async function renderWealthPage(container) {
         if (!hasReady) {
           startLoadingStateAnimation(resourceStatus);
         }
+        return;
+      }
+
+      if (hasMaintenance) {
+        if (wealthToolbar) {
+          wealthToolbar.style.display = hasReady ? 'flex' : 'none';
+        }
+        resourceStatus.style.display = 'block';
+        resourceStatus.innerHTML = renderSectionEmptyState({
+          message: t('player.maintenanceHint'),
+          className: '',
+        });
         return;
       }
 
@@ -1916,11 +1953,12 @@ export async function renderWealthPage(container) {
     });
   } catch (error) {
     console.error('Wealth page error:', error);
+    const isMaintenance = isAppErrorKind(error, 'maintenance');
     contentEl.innerHTML = `
       <div class="empty-state" style="padding: var(--space-xl) 0">
         <div class="empty-icon" style="color: var(--accent-red); margin-bottom: var(--space-md);"><i data-lucide="alert-triangle" style="width: 48px; height: 48px;"></i></div>
-        <div class="empty-text" style="color: var(--accent-red)">${t('player.errorTitle')}</div>
-        <div class="empty-hint">${t('player.errorHint')}</div>
+        <div class="empty-text" style="color: var(--accent-red)">${isMaintenance ? t('player.maintenanceTitle') : t('player.errorTitle')}</div>
+        <div class="empty-hint">${isMaintenance ? t('player.maintenanceHint') : t('player.errorHint')}</div>
       </div>
     `;
   }
@@ -2019,6 +2057,11 @@ async function loadStashValue(playerId, requestId, controls = {}) {
   } catch (err) {
     if (isStalePlayerRequest(requestId) || !stashWrapper.isConnected) return;
     console.error('Stash summary error:', err);
+    if (resourceState && isAppErrorKind(err, 'maintenance')) {
+      resourceState.stash = 'maintenance';
+      updatePlayerResourceStatus();
+      return;
+    }
     setCacheEntry(playerStashCache, playerId, { status: 'empty' });
     setWealthLastUpdate('');
     stashWrapper.style.display = 'none';
@@ -2159,6 +2202,11 @@ async function loadStashChart(playerId, requestId, controls = {}) {
   } catch (err) {
     console.error('Stash chart error:', err);
     if (!historyWrapper.isConnected || isStalePlayerRequest(requestId)) return;
+    if (resourceState && isAppErrorKind(err, 'maintenance')) {
+      resourceState.history = 'maintenance';
+      updatePlayerResourceStatus();
+      return;
+    }
     setCacheEntry(playerHistoryCache, playerId, { status: 'empty', series: [] });
     historyWrapper.style.display = 'none';
     historyWrapper.innerHTML = '';

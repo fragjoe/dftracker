@@ -22,6 +22,17 @@ const NETWORK_PATTERNS = [
     '无法连接到服务',
 ];
 
+const MAINTENANCE_PATTERNS = [
+    'api error (500)',
+    'api error (502)',
+    'api error (503)',
+    'api error (504)',
+    'internal error',
+    'service unavailable',
+    'bad gateway',
+    'gateway timeout',
+];
+
 const PENDING_PATTERNS = [
     'timeout',
     'timed out',
@@ -45,10 +56,6 @@ function collectErrorMessages(err) {
         current = current?.cause;
     }
 
-    messages.add(t('app.errors.notFound'));
-    messages.add(t('app.errors.network'));
-    messages.add(t('app.errors.system'));
-
     return [...messages]
         .filter(Boolean)
         .map((message) => String(message).toLowerCase());
@@ -67,6 +74,10 @@ export function classifyAppError(err) {
 
     if (includesAny(messages, NOT_FOUND_PATTERNS)) {
         return 'not_found';
+    }
+
+    if (includesAny(messages, MAINTENANCE_PATTERNS)) {
+        return 'maintenance';
     }
 
     if (includesAny(messages, NETWORK_PATTERNS)) {
@@ -116,6 +127,10 @@ export function sanitizeError(err) {
 
     if (kind === 'network') {
         return t('app.errors.network');
+    }
+
+    if (kind === 'maintenance') {
+        return t('app.errors.maintenance');
     }
 
     if (msg.includes('{') || msg.includes('protocol')) {
