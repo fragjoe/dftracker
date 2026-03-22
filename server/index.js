@@ -64,13 +64,13 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, {
         ok: true,
         service: 'dftracker-storage',
-        ...getTrackerSummary(),
+        ...(await getTrackerSummary()),
       });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/tracker-api/leaderboard') {
-      const payload = getLeaderboard({
+      const payload = await getLeaderboard({
         metric: url.searchParams.get('metric') || 'rankedPoints',
         seasonId: url.searchParams.get('seasonId') || '',
         ranked: parseBooleanParam(url.searchParams.get('ranked')),
@@ -82,28 +82,28 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/tracker-api/players/sync-profile') {
       const body = await readJsonBody(request);
-      const player = upsertPlayer(body.player);
+      const player = await upsertPlayer(body.player);
       sendJson(response, 200, { ok: true, player });
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/tracker-api/players/sync-stats') {
       const body = await readJsonBody(request);
-      const result = savePlayerStatsSnapshot(body);
+      const result = await savePlayerStatsSnapshot(body);
       sendJson(response, 200, { ok: true, ...result });
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/tracker-api/players/sync-wealth') {
       const body = await readJsonBody(request);
-      const result = savePlayerWealthSnapshot(body);
+      const result = await savePlayerWealthSnapshot(body);
       sendJson(response, 200, { ok: true, ...result });
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/tracker-api/players/sync-wealth-history') {
       const body = await readJsonBody(request);
-      const result = savePlayerWealthHistorySnapshot(body);
+      const result = await savePlayerWealthHistorySnapshot(body);
       sendJson(response, 200, { ok: true, ...result });
       return;
     }

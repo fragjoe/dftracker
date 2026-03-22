@@ -21,6 +21,8 @@ Saat ini analisis player difokuskan untuk:
 - Vanilla JavaScript (SPA)
 - Chart.js
 - Lucide icons
+- SQLite lokal untuk development
+- Postgres untuk Vercel / production
 - CSS custom styling
 - Vitest + jsdom untuk smoke test
 - ESLint untuk linting
@@ -226,11 +228,21 @@ Ini akan menyalakan:
 - frontend Vite
 - storage API lokal di `http://localhost:3001`
 
-File database SQLite disimpan di:
+Secara default saat local development, storage memakai SQLite dan file database disimpan di:
 
 ```text
 .data/dftracker.sqlite
 ```
+
+Jika `DATABASE_URL` atau `POSTGRES_URL` tersedia, storage API otomatis memakai Postgres. Ini adalah mode yang disarankan untuk deployment di Vercel.
+
+Untuk memindahkan data lama dari SQLite ke Postgres, jalankan:
+
+```bash
+DATABASE_URL="postgres://..." npm run migrate:postgres
+```
+
+Script ini akan membaca data dari `.data/dftracker.sqlite` lalu melakukan upsert ke Postgres.
 
 Endpoint dasar yang sudah tersedia:
 

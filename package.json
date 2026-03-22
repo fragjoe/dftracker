@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start:api": "node server/index.js",
+    "migrate:postgres": "node server/migrate-sqlite-to-postgres.js",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.js",
     "test:watch": "vitest --config vitest.config.js",
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "chart.js": "^4.5.1",
-    "lucide": "^0.577.0"
+    "lucide": "^0.577.0",
+    "postgres": "^3.4.8"
   }
 }

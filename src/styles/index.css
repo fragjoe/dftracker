@@ -1178,6 +1178,40 @@ html {
   background: var(--accent-primary);
 }
 
+.wealth-range-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: rgba(8, 12, 11, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.wealth-range-tab {
+  min-width: 60px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: all var(--transition-fast);
+}
+
+.wealth-range-tab:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.wealth-range-tab.active {
+  color: var(--bg-primary);
+  background: var(--accent-primary);
+}
+
 #tab-easy.active {
   background: var(--accent-green);
   color: #052e16;
@@ -2283,6 +2317,15 @@ tbody tr:last-child td {
 
   .stats-last-update {
     min-height: 0;
+  }
+
+  .wealth-range-tabs {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .wealth-range-tab {
+    flex: 1;
   }
 
   .season-selector {

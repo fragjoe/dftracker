@@ -40,8 +40,13 @@ const PLAYER_CACHE_MAX_AGE_MS = {
   lookup: 10 * 60 * 1000,
   stats: 45 * 1000,
   stash: 20 * 60 * 1000,
-  history: 20 * 60 * 1000,
+  history: 3 * 60 * 60 * 1000,
 };
+const WEALTH_HISTORY_RANGES = [
+  { value: '24h', days: 1 },
+  { value: '7d', days: 7 },
+  { value: '30d', days: 30 },
+];
 let chartConstructorPromise = null;
 
 async function getChartConstructor() {
@@ -157,6 +162,37 @@ function cacheResolvedPlayer(player, query = '') {
 
 function getStatsCacheKey(playerId, seasonId = '', ranked = false) {
   return `${playerId}:${seasonId || 'all'}:${ranked ? 'ranked' : 'all'}`;
+}
+
+function getWealthHistoryCacheKey(playerId, range = '30d') {
+  return `${playerId}:${range}`;
+}
+
+function getWealthHistoryCacheMaxAge(range = '30d') {
+  return PLAYER_CACHE_MAX_AGE_MS.history;
+}
+
+function getWealthHistoryRangeStart(range = '30d') {
+  const config = WEALTH_HISTORY_RANGES.find((item) => item.value === range) || WEALTH_HISTORY_RANGES[2];
+  return new Date(Date.now() - (config.days * 24 * 60 * 60 * 1000));
+}
+
+function renderWealthRangeTabs(selectedRange = '30d') {
+  return `
+    <div class="wealth-range-tabs" id="wealth-range-tabs" role="tablist" aria-label="${t('player.wealthHistory')} range">
+      ${WEALTH_HISTORY_RANGES.map((range) => `
+        <button
+          type="button"
+          class="wealth-range-tab${range.value === selectedRange ? ' active' : ''}"
+          data-wealth-range="${range.value}"
+          role="tab"
+          aria-selected="${range.value === selectedRange ? 'true' : 'false'}"
+        >
+          ${range.value.toUpperCase()}
+        </button>
+      `).join('')}
+    </div>
+  `;
 }
 
 function getPlayerViewState(playerId, activeSeasonId = '') {
@@ -482,7 +518,7 @@ function renderCombinedResourceEmptyState(messages, className = 'mb-lg') {
   `;
 }
 
-function renderWealthHistoryCard(content) {
+function renderWealthHistoryCard(content, controls = '') {
   return `
     <div class="card mb-lg">
       <div class="card-header" style="justify-content: space-between; flex-wrap: wrap; gap: var(--space-sm)">
@@ -490,22 +526,18 @@ function renderWealthHistoryCard(content) {
           <i data-lucide="line-chart" style="margin-right: 8px; width: 18px; color: var(--accent-primary)"></i>
           <span class="card-title">${t('player.wealthHistory')}</span>
         </div>
-        <div style="display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap">
-          <span class="text-muted" style="font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">
-            <i data-lucide="info" style="width: 14px; height: 14px;"></i>${t('player.wealthHint')}
-          </span>
-        </div>
+        ${controls}
       </div>
       ${content}
     </div>
   `;
 }
 
-function renderWealthHistoryLoading(message = t('player.stashLoading')) {
-  return renderSectionLoadingState({
+function renderWealthHistoryLoading(controls = '', message = t('player.stashLoading')) {
+  return renderWealthHistoryCard(renderSectionLoadingState({
     message,
-    className: 'mb-lg',
-  });
+    className: '',
+  }), controls);
 }
 
 function renderPlayerIdentityHeader(player) {
@@ -1589,11 +1621,10 @@ function renderStats(stats) {
 
     <div class="grid-2 mb-lg" style="gap: var(--space-md); align-items: stretch;">
       <div class="card" style="height: 100%;">
-        <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+        <div class="card-header" style="display: flex; align-items: center; gap: 8px;">
           <div style="display: flex; align-items: center; gap: 8px;">
             <i data-lucide="trophy" style="width: 18px; color: var(--accent-gold)"></i><span class="card-title">${t('player.sectionScoreBreakdown')}</span>
           </div>
-          <span class="text-muted" style="font-size: 0.75rem;">${t('player.scoreBreakdownHint')}</span>
         </div>
         <div class="chart-container" style="height: 340px; padding-top: 0;">
           <canvas id="score-breakdown-chart"></canvas>
@@ -1696,12 +1727,12 @@ function setWealthLastUpdate(timestamp = '') {
   lastUpdateEl.innerHTML = '';
 }
 
-async function renderHistoricalStashSeries(historyWrapper, allSeries) {
+async function renderHistoricalStashSeries(historyWrapper, allSeries, controls = '', range = '30d') {
   historyWrapper.innerHTML = renderWealthHistoryCard(`
     <div class="chart-container">
       <canvas id="stash-chart"></canvas>
     </div>
-  `);
+  `, controls);
   historyWrapper.style.display = 'block';
 
   const canvas = historyWrapper.querySelector('#stash-chart');
@@ -1716,12 +1747,16 @@ async function renderHistoricalStashSeries(historyWrapper, allSeries) {
   const latestEntry = allSeries[allSeries.length - 1];
   const labels = allSeries.map(s => {
     const d = new Date(s.time || s.createdAt || s.timestamp || 0);
+    if (range === '24h') {
+      return d.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' });
+    }
     return d.toLocaleDateString(getLocale(), { day: 'numeric', month: 'short' });
   });
 
   const netValues = allSeries.map(s => Number(s.assetsNet || s.netWorth || s.value || 0));
-  const pointRadius = getChartPointRadius(labels.length, 30);
-  const tickLimit = getAdaptiveTickLimit(labels.length, 30);
+  const rangeDays = Number(range.replace('d', '').replace('h', '')) || 30;
+  const pointRadius = getChartPointRadius(labels.length, range === '24h' ? 1 : rangeDays);
+  const tickLimit = getAdaptiveTickLimit(labels.length, range === '24h' ? 1 : rangeDays);
   const Chart = await getChartConstructor();
 
   if (stashChart) stashChart.destroy();
@@ -1755,39 +1790,66 @@ async function renderHistoricalStashSeries(historyWrapper, allSeries) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: {
+        duration: 1000,
+        easing: 'easeOutQuart',
+      },
+      interaction: {
+        intersect: false,
+        mode: 'index',
+      },
       plugins: {
-        legend: { display: false },
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: {
+            color: '#9ca89f',
+            usePointStyle: true,
+            pointStyle: 'circle',
+            padding: 15,
+            font: { family: 'Inter', size: 11, weight: '500' },
+          },
+        },
         tooltip: {
-          backgroundColor: '#111a16',
-          borderColor: 'rgba(15,247,150,0.3)',
+          backgroundColor: 'rgba(17, 26, 22, 0.95)',
+          borderColor: 'rgba(15, 247, 150, 0.2)',
           borderWidth: 1,
+          titleColor: '#fff',
+          bodyColor: '#9ca89f',
+          titleFont: { family: 'Inter', size: 13, weight: '700' },
+          bodyFont: { family: 'JetBrains Mono', size: 12 },
+          padding: 12,
+          cornerRadius: 10,
+          displayColors: true,
+          boxPadding: 6,
           callbacks: {
-            label: (ctx) => `${t('player.netWorth')}: ${formatPriceShort(ctx.raw)}`
-          }
-        }
+            label: (ctx) => `${t('player.netWorth')}: ${formatPrice(ctx.raw)}`,
+          },
+        },
       },
       scales: {
         y: {
           ticks: {
-            callback: v => formatPriceShort(v),
+            callback: (v) => formatPriceShort(v),
             color: '#5c6860',
-            font: { size: 10, family: 'JetBrains Mono' }
+            font: { size: 10, family: 'JetBrains Mono' },
+            padding: 8,
           },
-          grid: { color: 'rgba(255,255,255,0.05)' },
+          grid: { color: 'rgba(255,255,255,0.03)', drawBorder: false },
           grace: '8%',
         },
         x: {
+          grid: { display: false },
           ticks: {
             color: '#5c6860',
-            font: { size: 10 },
+            font: { size: 10, family: 'Inter' },
             maxRotation: 0,
             autoSkip: true,
             maxTicksLimit: tickLimit,
           },
-          grid: { display: false }
-        }
-      }
-    }
+        },
+      },
+    },
   });
 
   return true;
@@ -1862,6 +1924,17 @@ export async function renderWealthPage(container) {
       stash: 'loading',
       history: 'loading',
     };
+    let selectedHistoryRange = '30d';
+
+    const renderWealthRangeTabs = () => {
+      const wealthRangeTabs = contentEl.querySelector('#wealth-range-tabs');
+      if (!wealthRangeTabs) return;
+      wealthRangeTabs.querySelectorAll('[data-wealth-range]').forEach((button) => {
+        const isActive = button.dataset.wealthRange === selectedHistoryRange;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+    };
 
     const updatePlayerResourceStatus = () => {
       if (!resourceStatus) return;
@@ -1871,8 +1944,10 @@ export async function renderWealthPage(container) {
       const hasLoading = states.includes('loading');
       const hasReady = states.includes('ready');
       const hasMaintenance = states.includes('maintenance');
+      const isHistoryOnlyLoading = resourceState.stash === 'ready' && resourceState.history === 'loading';
+      const isHistoryOnlyPending = resourceState.stash === 'ready' && resourceState.history === 'pending';
 
-      if (hasLoading && !hasPending) {
+      if (hasLoading && !hasPending && !isHistoryOnlyLoading) {
         if (wealthToolbar) {
           wealthToolbar.style.display = 'none';
         }
@@ -1885,7 +1960,7 @@ export async function renderWealthPage(container) {
         return;
       }
 
-      if (hasPending) {
+      if (hasPending && !isHistoryOnlyPending) {
         if (wealthToolbar) {
           wealthToolbar.style.display = hasReady ? 'flex' : 'none';
         }
@@ -1902,6 +1977,15 @@ export async function renderWealthPage(container) {
         if (!hasReady) {
           startLoadingStateAnimation(resourceStatus);
         }
+        return;
+      }
+
+      if (isHistoryOnlyLoading || isHistoryOnlyPending) {
+        if (wealthToolbar) {
+          wealthToolbar.style.display = 'flex';
+        }
+        resourceStatus.style.display = 'none';
+        resourceStatus.innerHTML = '';
         return;
       }
 
@@ -1950,6 +2034,24 @@ export async function renderWealthPage(container) {
       historyWrapper,
       resourceState,
       updatePlayerResourceStatus,
+      range: selectedHistoryRange,
+    });
+
+    contentEl.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-wealth-range]');
+      if (!button || !contentEl.contains(button)) return;
+      const nextRange = button.dataset.wealthRange || '30d';
+      if (nextRange === selectedHistoryRange) return;
+      selectedHistoryRange = nextRange;
+      renderWealthRangeTabs();
+      const nextRequestId = ++activePlayerRequestId;
+      loadStashChart(player.id, nextRequestId, {
+        player,
+        historyWrapper,
+        resourceState,
+        updatePlayerResourceStatus,
+        range: selectedHistoryRange,
+      });
     });
   } catch (error) {
     console.error('Wealth page error:', error);
@@ -2105,12 +2207,15 @@ async function loadStashChart(playerId, requestId, controls = {}) {
   const player = controls.player || getActivePlayerProfileSummary();
   const resourceState = controls.resourceState || null;
   const updatePlayerResourceStatus = controls.updatePlayerResourceStatus || (() => {});
-  const freshHistoryCache = getFreshCacheEntry(playerHistoryCache, playerId, PLAYER_CACHE_MAX_AGE_MS.history);
+  const range = controls.range || '30d';
+  const historyCacheKey = getWealthHistoryCacheKey(playerId, range);
+  const freshHistoryCache = getFreshCacheEntry(playerHistoryCache, historyCacheKey, getWealthHistoryCacheMaxAge(range));
+  const rangeTabsMarkup = renderWealthRangeTabs(range);
 
   historyWrapper.style.display = 'none';
   historyWrapper.innerHTML = '';
   if (freshHistoryCache?.value?.status === 'ready' && Array.isArray(freshHistoryCache.value.series) && freshHistoryCache.value.series.length > 0) {
-    const didRender = await renderHistoricalStashSeries(historyWrapper, [...freshHistoryCache.value.series]);
+    const didRender = await renderHistoricalStashSeries(historyWrapper, [...freshHistoryCache.value.series], rangeTabsMarkup, range);
     if (didRender && resourceState) {
       resourceState.history = 'ready';
       updatePlayerResourceStatus();
@@ -2123,18 +2228,27 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       resourceState.history = 'empty';
       updatePlayerResourceStatus();
     } else {
-      historyWrapper.innerHTML = renderSectionEmptyState({
+      historyWrapper.innerHTML = renderWealthHistoryCard(renderSectionEmptyState({
         message: t('player.stashUnavailable'),
-      });
+        className: '',
+      }), rangeTabsMarkup);
     }
+    historyWrapper.style.display = 'block';
     return;
   }
 
   if (resourceState) {
     resourceState.history = 'loading';
     updatePlayerResourceStatus();
+    historyWrapper.innerHTML = renderWealthHistoryLoading(rangeTabsMarkup);
+    historyWrapper.style.display = 'block';
+    startLoadingStateAnimation(historyWrapper);
+    if (window.lucide) {
+      setTimeout(() => window.lucide.createIcons(), 10);
+    }
   } else {
-    historyWrapper.innerHTML = renderWealthHistoryLoading();
+    historyWrapper.innerHTML = renderWealthHistoryLoading(rangeTabsMarkup);
+    historyWrapper.style.display = 'block';
     startLoadingStateAnimation(historyWrapper);
     if (window.lucide) {
       setTimeout(() => window.lucide.createIcons(), 10);
@@ -2143,11 +2257,11 @@ async function loadStashChart(playerId, requestId, controls = {}) {
 
   try {
     const now = new Date();
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const rangeStart = getWealthHistoryRangeStart(range);
 
     const data = await pollPlayerResource(() => getPlayerOperationHistoricalStashValue(playerId, {
       pageSize: 50,
-      startTime: thirtyDaysAgo.toISOString(),
+      startTime: rangeStart.toISOString(),
       endTime: now.toISOString()
     }), {
       attemptsPerCycle: 2,
@@ -2169,16 +2283,16 @@ async function loadStashChart(playerId, requestId, controls = {}) {
     const allSeries = data?.historicalStashValues || data?.stashes || data?.historicalStashValue || data?.series || [];
 
     if (allSeries.length === 0) {
-      setCacheEntry(playerHistoryCache, playerId, { status: 'empty', series: [] });
-      historyWrapper.style.display = 'none';
-      historyWrapper.innerHTML = '';
+      setCacheEntry(playerHistoryCache, historyCacheKey, { status: 'empty', series: [] });
+      historyWrapper.style.display = 'block';
       if (resourceState) {
         resourceState.history = 'empty';
         updatePlayerResourceStatus();
       } else {
-        historyWrapper.innerHTML = renderSectionEmptyState({
+        historyWrapper.innerHTML = renderWealthHistoryCard(renderSectionEmptyState({
           message: t('player.stashUnavailable'),
-        });
+          className: '',
+        }), rangeTabsMarkup);
         if (window.lucide) {
           setTimeout(() => window.lucide.createIcons(), 10);
         }
@@ -2186,19 +2300,21 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       return;
     }
 
-    setCacheEntry(playerHistoryCache, playerId, {
+    setCacheEntry(playerHistoryCache, historyCacheKey, {
       status: 'ready',
       series: [...allSeries],
     });
-    await renderHistoricalStashSeries(historyWrapper, allSeries);
+    await renderHistoricalStashSeries(historyWrapper, allSeries, rangeTabsMarkup, range);
     if (resourceState) {
       resourceState.history = 'ready';
       updatePlayerResourceStatus();
     }
-    void persistTrackedPlayerWealthHistory({
-      player,
-      history: allSeries,
-    });
+    if (range === '30d') {
+      void persistTrackedPlayerWealthHistory({
+        player,
+        history: allSeries,
+      });
+    }
   } catch (err) {
     console.error('Stash chart error:', err);
     if (!historyWrapper.isConnected || isStalePlayerRequest(requestId)) return;
@@ -2207,16 +2323,16 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       updatePlayerResourceStatus();
       return;
     }
-    setCacheEntry(playerHistoryCache, playerId, { status: 'empty', series: [] });
-    historyWrapper.style.display = 'none';
-    historyWrapper.innerHTML = '';
+    setCacheEntry(playerHistoryCache, historyCacheKey, { status: 'empty', series: [] });
+    historyWrapper.style.display = 'block';
     if (resourceState) {
       resourceState.history = 'empty';
       updatePlayerResourceStatus();
     } else {
-      historyWrapper.innerHTML = renderSectionEmptyState({
+      historyWrapper.innerHTML = renderWealthHistoryCard(renderSectionEmptyState({
         message: `⚠️ ${t('player.chartLoadError')}: ${err.message || t('player.unknownError')}`,
-      });
+        className: '',
+      }), rangeTabsMarkup);
       if (window.lucide) {
         setTimeout(() => window.lucide.createIcons(), 10);
       }
@@ -2299,7 +2415,7 @@ async function renderScoreBreakdownChart(stats) {
             color: '#9ca89f',
             font: {
               size: 12,
-              family: 'Inter',
+              family: "'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif",
               weight: '600'
             },
             callback: (_, index) => [
@@ -2354,6 +2470,12 @@ function formatPriceShort(value) {
   if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
   if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
   if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  return num.toLocaleString(getLocale());
+}
+
+function formatPrice(value) {
+  const num = Number(value);
+  if (isNaN(num)) return '0';
   return num.toLocaleString(getLocale());
 }
 
