@@ -2,7 +2,7 @@
     "rewrites": [
         {
             "source": "/tracker-api/(.*)",
-            "destination": "/api/tracker-api/$1"
+            "destination": "/api/tracker-api?path=$1"
         },
         {
             "source": "/api/(.*)",

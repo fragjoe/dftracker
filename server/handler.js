@@ -62,12 +62,18 @@ function normalizeTrackerPath(pathname = '') {
   if (pathname.startsWith('/api/tracker-api/')) {
     return pathname.replace(/^\/api/, '');
   }
+  if (pathname === '/api/tracker-api') {
+    return '/tracker-api';
+  }
   return pathname;
 }
 
 export async function handleTrackerRequest(request, response) {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-  const pathname = normalizeTrackerPath(url.pathname);
+  const rewrittenPath = url.searchParams.get('path');
+  const pathname = normalizeTrackerPath(
+    rewrittenPath ? `/tracker-api/${String(rewrittenPath).replace(/^\/+/, '')}` : url.pathname,
+  );
 
   if (request.method === 'OPTIONS') {
     sendJson(response, 204, {});
