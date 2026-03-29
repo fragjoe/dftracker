@@ -1,6 +1,10 @@
 {
     "rewrites": [
         {
+            "source": "/tracker-api/(.*)",
+            "destination": "/api/tracker-api/$1"
+        },
+        {
             "source": "/api/(.*)",
             "destination": "https://api.deltaforceapi.com/$1"
         },
