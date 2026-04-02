@@ -17,6 +17,13 @@ export const LANGUAGE_EN = 'LANGUAGE_EN';
 export const LANGUAGE_ID = 'LANGUAGE_ID';
 export const LANGUAGE_ZH_HANS = 'LANGUAGE_ZH_HANS';
 
+function emitApiStatus(status) {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('app:api-status', {
+        detail: { status },
+    }));
+}
+
 /**
  * Generic POST request to the API
  */
@@ -33,10 +40,15 @@ async function apiPost(endpoint, body = {}) {
             throw new Error(`API Error (${res.status}): ${errorText}`);
         }
 
-        return await res.json();
+        const payload = await res.json();
+        emitApiStatus('online');
+        return payload;
     } catch (err) {
         const wrappedError = new Error(sanitizeError(err), { cause: err });
         wrappedError.errorKind = classifyAppError(err);
+        if (wrappedError.errorKind === 'maintenance' || wrappedError.errorKind === 'network') {
+            emitApiStatus('offline');
+        }
         throw wrappedError;
     }
 }

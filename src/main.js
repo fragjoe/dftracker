@@ -48,12 +48,14 @@ import {
   X,
   createIcons,
 } from 'lucide';
+import { listSeasons } from './api/client.js';
 import { clearActivePlayerContext, getActivePlayerProfileSummary, renderPlayerPage, renderWealthPage } from './pages/player.js';
 import { getCurrentLanguage, getLanguageOptions, initializeLanguage, setCurrentLanguage, t } from './i18n.js';
 import { escapeHTML } from './utils/security.js';
 
 const STORAGE_NOTICE_KEY = 'storage_notice_acknowledged';
 let activeRenderRequestId = 0;
+let apiStatus = 'checking';
 
 const APP_ICONS = {
   AlertTriangle,
@@ -279,6 +281,34 @@ function updateStaticLanguageUI() {
   }
 
   renderActivePlayerHeader();
+  updateApiStatusIndicator();
+}
+
+function updateApiStatusIndicator() {
+  const indicator = document.querySelector('#api-status-indicator .status-dot');
+  const wrapper = document.getElementById('api-status-indicator');
+  if (!indicator || !wrapper) return;
+
+  indicator.classList.toggle('status-dot--offline', apiStatus === 'offline');
+  indicator.classList.toggle('status-dot--checking', apiStatus === 'checking');
+
+  const label = apiStatus === 'offline' ? 'offline' : apiStatus === 'checking' ? 'checking' : 'online';
+  wrapper.setAttribute('aria-label', `API ${label}`);
+  wrapper.setAttribute('title', `API ${label}`);
+}
+
+async function refreshApiStatus() {
+  apiStatus = 'checking';
+  updateApiStatusIndicator();
+
+  try {
+    await listSeasons({ pageSize: 1 });
+    apiStatus = 'online';
+  } catch (error) {
+    apiStatus = 'offline';
+  }
+
+  updateApiStatusIndicator();
 }
 
 function updateStorageNoticeVisibility() {
@@ -618,6 +648,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initializeLanguage();
   updateStaticLanguageUI();
   updateStorageNoticeVisibility();
+  updateApiStatusIndicator();
 
   window.addEventListener('app:language-change', () => {
     toggleLanguageMenu(false);
@@ -634,5 +665,11 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  window.addEventListener('app:api-status', (event) => {
+    apiStatus = event?.detail?.status || 'checking';
+    updateApiStatusIndicator();
+  });
+
   router();
+  refreshApiStatus();
 });

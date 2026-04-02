@@ -361,9 +361,9 @@ html {
 
 .brand-group {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   line-height: 1;
 }
 
@@ -770,27 +770,13 @@ html {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 16'%3E%3Crect width='22' height='16' fill='%23de2910'/%3E%3Cpath d='m4 2 0.5 1.4H6l-1.2 0.9 0.45 1.45L4 4.85l-1.25.9.45-1.45L2 3.4h1.5z' fill='%23ffde00'/%3E%3Ccircle cx='8' cy='2.8' r='.7' fill='%23ffde00'/%3E%3Ccircle cx='9.5' cy='4.6' r='.7' fill='%23ffde00'/%3E%3Ccircle cx='9.3' cy='6.8' r='.7' fill='%23ffde00'/%3E%3Ccircle cx='7.7' cy='8.5' r='.7' fill='%23ffde00'/%3E%3C/svg%3E");
 }
 
-.api-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: rgba(8, 12, 11, 0.72);
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-}
-
 .brand-status {
-  padding: 4px 10px;
-  justify-content: flex-start;
-  align-self: flex-start;
-  font-size: 0.72rem;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .status-dot {
@@ -800,6 +786,16 @@ html {
   background: var(--accent-green);
   box-shadow: 0 0 8px var(--accent-green);
   animation: pulse-dot 2s infinite;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+}
+
+.status-dot.status-dot--offline {
+  background: var(--accent-red);
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.95);
+}
+
+.status-dot.status-dot--checking {
+  opacity: 0.7;
 }
 
 @keyframes pulse-dot {
@@ -2190,7 +2186,7 @@ tbody tr:last-child td {
   }
 
   .brand-group {
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     gap: 4px;
     text-align: center;
@@ -2297,7 +2293,6 @@ tbody tr:last-child td {
 
   .header,
   .nav,
-  .api-status,
   .player-trigger,
   .player-menu,
   .language-menu,
