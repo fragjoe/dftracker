@@ -303,3 +303,62 @@ export async function fetchTrackedSeasons({ pageSize = 50, pageToken = '', langu
     return { seasons: [], fetchedAt: '', source: 'browser', stale: true };
   }
 }
+
+export async function fetchTrackedMarketItems({ filter = '', pageToken = '', pageSize = 10, language = '' } = {}) {
+  const params = new URLSearchParams({
+    filter,
+    pageToken,
+    pageSize: String(pageSize),
+  });
+  if (language) {
+    params.set('language', language);
+  }
+
+  const response = await fetch(`${TRACKER_API_BASE}/market/items?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Market items request failed (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function fetchTrackedMarketItem({ itemId = '', language = '' } = {}) {
+  const params = new URLSearchParams({ itemId });
+  if (language) {
+    params.set('language', language);
+  }
+
+  const response = await fetch(`${TRACKER_API_BASE}/market/item?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Market item request failed (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function fetchTrackedMarketItemSummary({ itemId = '', language = '' } = {}) {
+  const params = new URLSearchParams({ itemId });
+  if (language) {
+    params.set('language', language);
+  }
+
+  const response = await fetch(`${TRACKER_API_BASE}/market/item-summary?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Market item summary request failed (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function fetchTrackedMarketItemSeries({ itemId = '', days = 1, language = '' } = {}) {
+  const params = new URLSearchParams({
+    itemId,
+    days: String(days),
+  });
+  if (language) {
+    params.set('language', language);
+  }
+
+  const response = await fetch(`${TRACKER_API_BASE}/market/item-series?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Market item series request failed (${response.status})`);
+  }
+  return response.json();
+}

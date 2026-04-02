@@ -8,6 +8,9 @@ const dbPath = process.env.DFTRACKER_DB_PATH || DEFAULT_DB_PATH;
 const postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 const storageMode = postgresUrl ? 'postgres' : 'sqlite';
 const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MARKET_CATALOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MARKET_ITEM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const MARKET_SUMMARY_TTL_MS = 60 * 60 * 1000;
 
 let sqliteDb = null;
 let postgresClient = null;
@@ -37,6 +40,14 @@ function getIsoWeekKey(dateInput = new Date()) {
 
 function buildLeaderboardFilterKey({ metric = 'rankedPoints', seasonId = '', ranked = false } = {}) {
   return `${String(metric || 'rankedPoints')}:${String(seasonId || 'all')}:${ranked ? 'ranked' : 'all'}`;
+}
+
+function buildMarketCatalogCacheKey({ filter = '', pageToken = '', pageSize = 10, language = '' } = {}) {
+  return `${language}:${pageSize}:${pageToken}:${filter}`;
+}
+
+function getMarketSeriesTtlMs(days = 1) {
+  return Number(days) <= 3 ? 30 * 60 * 1000 : 2 * 60 * 60 * 1000;
 }
 
 function normalizePlayer(player = {}) {
@@ -140,6 +151,42 @@ function ensureSqliteReady() {
 
     CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
       ON seasons_cache(active, number);
+
+    CREATE TABLE IF NOT EXISTS market_catalog_cache (
+      cache_key TEXT PRIMARY KEY,
+      filter TEXT NOT NULL,
+      page_token TEXT NOT NULL,
+      page_size INTEGER NOT NULL,
+      language TEXT NOT NULL,
+      items_json TEXT NOT NULL,
+      next_page_token TEXT,
+      fetched_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS market_item_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      item_json TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language)
+    );
+
+    CREATE TABLE IF NOT EXISTS market_item_summary_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language)
+    );
+
+    CREATE TABLE IF NOT EXISTS market_item_series_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      days INTEGER NOT NULL,
+      series_json TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language, days)
+    );
   `);
 }
 
@@ -235,6 +282,50 @@ async function ensurePostgresReady() {
   await postgresClient`
     CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
       ON seasons_cache(active, number)
+  `;
+
+  await postgresClient`
+    CREATE TABLE IF NOT EXISTS market_catalog_cache (
+      cache_key TEXT PRIMARY KEY,
+      filter TEXT NOT NULL,
+      page_token TEXT NOT NULL,
+      page_size INTEGER NOT NULL,
+      language TEXT NOT NULL,
+      items_json JSONB NOT NULL,
+      next_page_token TEXT,
+      fetched_at TEXT NOT NULL
+    )
+  `;
+
+  await postgresClient`
+    CREATE TABLE IF NOT EXISTS market_item_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      item_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language)
+    )
+  `;
+
+  await postgresClient`
+    CREATE TABLE IF NOT EXISTS market_item_summary_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      summary_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language)
+    )
+  `;
+
+  await postgresClient`
+    CREATE TABLE IF NOT EXISTS market_item_series_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      days INTEGER NOT NULL,
+      series_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language, days)
+    )
   `;
 }
 
@@ -767,6 +858,347 @@ export async function getCachedSeasonsSummary() {
     seasons,
     fetchedAt,
     isFresh,
+  };
+}
+
+async function readMarketCatalogCache(params) {
+  const cacheKey = buildMarketCatalogCacheKey(params);
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT items_json, next_page_token, fetched_at
+      FROM market_catalog_cache
+      WHERE cache_key = ${cacheKey}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      items: row.items_json?.items || [],
+      nextPageToken: row.next_page_token || '',
+      fetchedAt: row.fetched_at,
+    };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT items_json, next_page_token, fetched_at
+    FROM market_catalog_cache
+    WHERE cache_key = ?
+    LIMIT 1
+  `).get(cacheKey);
+  if (!row) return null;
+  const parsed = parseJsonSafely(row.items_json, {});
+  return {
+    items: parsed.items || [],
+    nextPageToken: row.next_page_token || '',
+    fetchedAt: row.fetched_at,
+  };
+}
+
+export async function writeMarketCatalogCache(params, payload = {}, fetchedAt = getNowIso()) {
+  await ensureReady();
+  const cacheKey = buildMarketCatalogCacheKey(params);
+  const normalizedPayload = {
+    items: Array.isArray(payload.items) ? payload.items : [],
+  };
+
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      INSERT INTO market_catalog_cache (
+        cache_key,
+        filter,
+        page_token,
+        page_size,
+        language,
+        items_json,
+        next_page_token,
+        fetched_at
+      )
+      VALUES (
+        ${cacheKey},
+        ${String(params.filter || '')},
+        ${String(params.pageToken || '')},
+        ${Number(params.pageSize || 10)},
+        ${String(params.language || '')},
+        ${postgresClient.json(normalizedPayload)},
+        ${String(payload.nextPageToken || '')},
+        ${fetchedAt}
+      )
+      ON CONFLICT (cache_key) DO UPDATE SET
+        items_json = EXCLUDED.items_json,
+        next_page_token = EXCLUDED.next_page_token,
+        fetched_at = EXCLUDED.fetched_at
+    `;
+    return;
+  }
+
+  sqliteDb.prepare(`
+    INSERT INTO market_catalog_cache (
+      cache_key,
+      filter,
+      page_token,
+      page_size,
+      language,
+      items_json,
+      next_page_token,
+      fetched_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cache_key) DO UPDATE SET
+      items_json = excluded.items_json,
+      next_page_token = excluded.next_page_token,
+      fetched_at = excluded.fetched_at
+  `).run(
+    cacheKey,
+    String(params.filter || ''),
+    String(params.pageToken || ''),
+    Number(params.pageSize || 10),
+    String(params.language || ''),
+    JSON.stringify(normalizedPayload),
+    String(payload.nextPageToken || ''),
+    fetchedAt,
+  );
+}
+
+async function readMarketItemCache(itemId, language = '') {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT item_json, fetched_at
+      FROM market_item_cache
+      WHERE item_id = ${String(itemId)}
+        AND language = ${String(language || '')}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return { item: row.item_json || {}, fetchedAt: row.fetched_at };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT item_json, fetched_at
+    FROM market_item_cache
+    WHERE item_id = ?
+      AND language = ?
+    LIMIT 1
+  `).get(String(itemId), String(language || ''));
+  if (!row) return null;
+  return {
+    item: parseJsonSafely(row.item_json, {}),
+    fetchedAt: row.fetched_at,
+  };
+}
+
+export async function writeMarketItemCache(itemId, language = '', item = {}, fetchedAt = getNowIso()) {
+  await ensureReady();
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      INSERT INTO market_item_cache (
+        item_id,
+        language,
+        item_json,
+        fetched_at
+      )
+      VALUES (
+        ${String(itemId)},
+        ${String(language || '')},
+        ${postgresClient.json(item || {})},
+        ${fetchedAt}
+      )
+      ON CONFLICT (item_id, language) DO UPDATE SET
+        item_json = EXCLUDED.item_json,
+        fetched_at = EXCLUDED.fetched_at
+    `;
+    return;
+  }
+
+  sqliteDb.prepare(`
+    INSERT INTO market_item_cache (
+      item_id,
+      language,
+      item_json,
+      fetched_at
+    )
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(item_id, language) DO UPDATE SET
+      item_json = excluded.item_json,
+      fetched_at = excluded.fetched_at
+  `).run(String(itemId), String(language || ''), JSON.stringify(item || {}), fetchedAt);
+}
+
+async function readMarketItemSummaryCache(itemId, language = '') {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT summary_json, fetched_at
+      FROM market_item_summary_cache
+      WHERE item_id = ${String(itemId)}
+        AND language = ${String(language || '')}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return { summary: row.summary_json || {}, fetchedAt: row.fetched_at };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT summary_json, fetched_at
+    FROM market_item_summary_cache
+    WHERE item_id = ?
+      AND language = ?
+    LIMIT 1
+  `).get(String(itemId), String(language || ''));
+  if (!row) return null;
+  return {
+    summary: parseJsonSafely(row.summary_json, {}),
+    fetchedAt: row.fetched_at,
+  };
+}
+
+export async function writeMarketItemSummaryCache(itemId, language = '', summary = {}, fetchedAt = getNowIso()) {
+  await ensureReady();
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      INSERT INTO market_item_summary_cache (
+        item_id,
+        language,
+        summary_json,
+        fetched_at
+      )
+      VALUES (
+        ${String(itemId)},
+        ${String(language || '')},
+        ${postgresClient.json(summary || {})},
+        ${fetchedAt}
+      )
+      ON CONFLICT (item_id, language) DO UPDATE SET
+        summary_json = EXCLUDED.summary_json,
+        fetched_at = EXCLUDED.fetched_at
+    `;
+    return;
+  }
+
+  sqliteDb.prepare(`
+    INSERT INTO market_item_summary_cache (
+      item_id,
+      language,
+      summary_json,
+      fetched_at
+    )
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(item_id, language) DO UPDATE SET
+      summary_json = excluded.summary_json,
+      fetched_at = excluded.fetched_at
+  `).run(String(itemId), String(language || ''), JSON.stringify(summary || {}), fetchedAt);
+}
+
+async function readMarketItemSeriesCache(itemId, language = '', days = 1) {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT series_json, fetched_at
+      FROM market_item_series_cache
+      WHERE item_id = ${String(itemId)}
+        AND language = ${String(language || '')}
+        AND days = ${Number(days || 1)}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return { payload: row.series_json || {}, fetchedAt: row.fetched_at };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT series_json, fetched_at
+    FROM market_item_series_cache
+    WHERE item_id = ?
+      AND language = ?
+      AND days = ?
+    LIMIT 1
+  `).get(String(itemId), String(language || ''), Number(days || 1));
+  if (!row) return null;
+  return {
+    payload: parseJsonSafely(row.series_json, {}),
+    fetchedAt: row.fetched_at,
+  };
+}
+
+export async function writeMarketItemSeriesCache(itemId, language = '', days = 1, payload = {}, fetchedAt = getNowIso()) {
+  await ensureReady();
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      INSERT INTO market_item_series_cache (
+        item_id,
+        language,
+        days,
+        series_json,
+        fetched_at
+      )
+      VALUES (
+        ${String(itemId)},
+        ${String(language || '')},
+        ${Number(days || 1)},
+        ${postgresClient.json(payload || {})},
+        ${fetchedAt}
+      )
+      ON CONFLICT (item_id, language, days) DO UPDATE SET
+        series_json = EXCLUDED.series_json,
+        fetched_at = EXCLUDED.fetched_at
+    `;
+    return;
+  }
+
+  sqliteDb.prepare(`
+    INSERT INTO market_item_series_cache (
+      item_id,
+      language,
+      days,
+      series_json,
+      fetched_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(item_id, language, days) DO UPDATE SET
+      series_json = excluded.series_json,
+      fetched_at = excluded.fetched_at
+  `).run(String(itemId), String(language || ''), Number(days || 1), JSON.stringify(payload || {}), fetchedAt);
+}
+
+function isFreshTimestamp(fetchedAt, ttlMs) {
+  if (!fetchedAt) return false;
+  const timestamp = new Date(fetchedAt).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return (Date.now() - timestamp) < ttlMs;
+}
+
+export async function getCachedMarketCatalogSummary(params = {}) {
+  await ensureReady();
+  const cached = await readMarketCatalogCache(params);
+  return {
+    ...(cached || { items: [], nextPageToken: '', fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, MARKET_CATALOG_TTL_MS),
+  };
+}
+
+export async function getCachedMarketItemSummary(itemId, language = '') {
+  await ensureReady();
+  const cached = await readMarketItemCache(itemId, language);
+  return {
+    ...(cached || { item: null, fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, MARKET_ITEM_TTL_MS),
+  };
+}
+
+export async function getCachedMarketPriceSummary(itemId, language = '') {
+  await ensureReady();
+  const cached = await readMarketItemSummaryCache(itemId, language);
+  return {
+    ...(cached || { summary: null, fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, MARKET_SUMMARY_TTL_MS),
+  };
+}
+
+export async function getCachedMarketSeriesSummary(itemId, language = '', days = 1) {
+  await ensureReady();
+  const cached = await readMarketItemSeriesCache(itemId, language, days);
+  return {
+    ...(cached || { payload: null, fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, getMarketSeriesTtlMs(days)),
   };
 }
 

@@ -122,6 +122,50 @@ async function ensurePostgresSchema() {
     CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
       ON seasons_cache(active, number)
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS market_catalog_cache (
+      cache_key TEXT PRIMARY KEY,
+      filter TEXT NOT NULL,
+      page_token TEXT NOT NULL,
+      page_size INTEGER NOT NULL,
+      language TEXT NOT NULL,
+      items_json JSONB NOT NULL,
+      next_page_token TEXT,
+      fetched_at TEXT NOT NULL
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS market_item_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      item_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS market_item_summary_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      summary_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS market_item_series_cache (
+      item_id TEXT NOT NULL,
+      language TEXT NOT NULL,
+      days INTEGER NOT NULL,
+      series_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, language, days)
+    )
+  `;
 }
 
 function readSqliteRows() {

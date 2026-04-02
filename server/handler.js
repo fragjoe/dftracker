@@ -1,11 +1,19 @@
 import {
   getCachedSeasonsSummary,
+  getCachedMarketCatalogSummary,
+  getCachedMarketItemSummary,
+  getCachedMarketPriceSummary,
+  getCachedMarketSeriesSummary,
   getLeaderboard,
   getTrackerSummary,
   savePlayerStatsSnapshot,
   savePlayerWealthHistorySnapshot,
   savePlayerWealthSnapshot,
   upsertPlayer,
+  writeMarketCatalogCache,
+  writeMarketItemCache,
+  writeMarketItemSeriesCache,
+  writeMarketItemSummaryCache,
   writeCachedSeasons,
 } from './db.js';
 
@@ -82,6 +90,21 @@ async function fetchUpstreamSeasons({ pageSize = 50, pageToken = '', language = 
     method: 'POST',
     headers: CONNECT_HEADERS,
     body: JSON.stringify({ language, pageSize, pageToken }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API Error (${response.status}): ${errorText}`);
+  }
+
+  return response.json();
+}
+
+async function postUpstream(path, body = {}) {
+  const response = await fetch(`${DELTAFORCE_API_BASE}${path}`, {
+    method: 'POST',
+    headers: CONNECT_HEADERS,
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -169,6 +192,230 @@ export async function handleTrackerRequest(request, response) {
           return;
         }
 
+        throw error;
+      }
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/market/items') {
+      const params = {
+        filter: url.searchParams.get('filter') || '',
+        pageToken: url.searchParams.get('pageToken') || '',
+        pageSize: Number(url.searchParams.get('pageSize') || 10),
+        language: url.searchParams.get('language') || 'LANGUAGE_EN',
+      };
+      const cached = await getCachedMarketCatalogSummary(params);
+
+      if (cached.isFresh) {
+        sendJson(response, 200, {
+          items: cached.items,
+          nextPageToken: cached.nextPageToken,
+          fetchedAt: cached.fetchedAt,
+          source: 'database',
+          stale: false,
+        });
+        return;
+      }
+
+      try {
+        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+          filter: params.filter,
+          pageToken: params.pageToken,
+          pageSize: params.pageSize,
+          language: params.language,
+        });
+        const payload = {
+          items: upstream.items || upstream.auctionItems || [],
+          nextPageToken: upstream.nextPageToken || '',
+        };
+        const fetchedAt = new Date().toISOString();
+        await writeMarketCatalogCache(params, payload, fetchedAt);
+        sendJson(response, 200, {
+          ...payload,
+          fetchedAt,
+          source: 'upstream',
+          stale: false,
+        });
+        return;
+      } catch (error) {
+        if (cached.items?.length) {
+          sendJson(response, 200, {
+            items: cached.items,
+            nextPageToken: cached.nextPageToken,
+            fetchedAt: cached.fetchedAt,
+            source: 'database',
+            stale: true,
+          });
+          return;
+        }
+        throw error;
+      }
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/market/item') {
+      const itemId = url.searchParams.get('itemId') || '';
+      const language = url.searchParams.get('language') || 'LANGUAGE_EN';
+      const cached = await getCachedMarketItemSummary(itemId, language);
+
+      if (cached.isFresh && cached.item) {
+        sendJson(response, 200, {
+          item: cached.item,
+          fetchedAt: cached.fetchedAt,
+          source: 'database',
+          stale: false,
+        });
+        return;
+      }
+
+      try {
+        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItem', { id: itemId, language });
+        const item = upstream.item || upstream;
+        const fetchedAt = new Date().toISOString();
+        await writeMarketItemCache(itemId, language, item, fetchedAt);
+        sendJson(response, 200, {
+          item,
+          fetchedAt,
+          source: 'upstream',
+          stale: false,
+        });
+        return;
+      } catch (error) {
+        if (cached.item) {
+          sendJson(response, 200, {
+            item: cached.item,
+            fetchedAt: cached.fetchedAt,
+            source: 'database',
+            stale: true,
+          });
+          return;
+        }
+        throw error;
+      }
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/market/item-summary') {
+      const itemId = url.searchParams.get('itemId') || '';
+      const language = url.searchParams.get('language') || 'LANGUAGE_EN';
+      const cached = await getCachedMarketPriceSummary(itemId, language);
+
+      if (cached.isFresh && cached.summary) {
+        sendJson(response, 200, {
+          ...cached.summary,
+          fetchedAt: cached.fetchedAt,
+          source: 'database',
+          stale: false,
+        });
+        return;
+      }
+
+      try {
+        const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const [latestPriceData, baselineData] = await Promise.all([
+          postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPrices', {
+            auctionItemId: itemId,
+            pageSize: 1,
+            orderBy: 'created_at desc',
+            startTime: oneDayAgo.toISOString(),
+            endTime: now.toISOString(),
+            language,
+          }),
+          postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
+            auctionItemId: itemId,
+            startTime: sevenDaysAgo.toISOString(),
+            endTime: now.toISOString(),
+            interval: 'INTERVAL_DAY',
+            language,
+          }),
+        ]);
+
+        const latestPrice = latestPriceData.prices?.[0] || latestPriceData.auctionItemPrices?.[0] || latestPriceData.items?.[0] || {};
+        const baselineSeries = baselineData.priceSeries || baselineData.series || baselineData.prices || [];
+        const values = baselineSeries
+          .map((entry) => Number(entry.priceAverage || entry.priceAvg || entry.average || entry.avg || 0))
+          .filter((value) => value > 0)
+          .sort((a, b) => a - b);
+        const middleIndex = Math.floor(values.length / 2);
+        const marketBaseline7d = values.length === 0
+          ? 0
+          : (values.length % 2 === 0 ? (values[middleIndex - 1] + values[middleIndex]) / 2 : values[middleIndex]);
+        const summary = {
+          latestPrice,
+          price: Number(latestPrice.price || 0),
+          marketBaseline7d: Number(marketBaseline7d || 0),
+        };
+        const fetchedAt = new Date().toISOString();
+        await writeMarketItemSummaryCache(itemId, language, summary, fetchedAt);
+        sendJson(response, 200, {
+          ...summary,
+          fetchedAt,
+          source: 'upstream',
+          stale: false,
+        });
+        return;
+      } catch (error) {
+        if (cached.summary) {
+          sendJson(response, 200, {
+            ...cached.summary,
+            fetchedAt: cached.fetchedAt,
+            source: 'database',
+            stale: true,
+          });
+          return;
+        }
+        throw error;
+      }
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/market/item-series') {
+      const itemId = url.searchParams.get('itemId') || '';
+      const language = url.searchParams.get('language') || 'LANGUAGE_EN';
+      const days = Number(url.searchParams.get('days') || 1);
+      const cached = await getCachedMarketSeriesSummary(itemId, language, days);
+
+      if (cached.isFresh && cached.payload) {
+        sendJson(response, 200, {
+          ...cached.payload,
+          fetchedAt: cached.fetchedAt,
+          source: 'database',
+          stale: false,
+        });
+        return;
+      }
+
+      try {
+        const now = new Date();
+        const startTime = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+        const interval = days <= 3 ? 'INTERVAL_HOUR' : 'INTERVAL_DAY';
+        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
+          auctionItemId: itemId,
+          startTime: startTime.toISOString(),
+          endTime: now.toISOString(),
+          interval,
+          language,
+        });
+        const payload = {
+          priceSeries: upstream.priceSeries || upstream.series || upstream.prices || [],
+        };
+        const fetchedAt = new Date().toISOString();
+        await writeMarketItemSeriesCache(itemId, language, days, payload, fetchedAt);
+        sendJson(response, 200, {
+          ...payload,
+          fetchedAt,
+          source: 'upstream',
+          stale: false,
+        });
+        return;
+      } catch (error) {
+        if (cached.payload) {
+          sendJson(response, 200, {
+            ...cached.payload,
+            fetchedAt: cached.fetchedAt,
+            source: 'database',
+            stale: true,
+          });
+          return;
+        }
         throw error;
       }
     }

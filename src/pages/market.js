@@ -5,11 +5,13 @@
 import {
   LANGUAGE_EN,
   LANGUAGE_ZH_HANS,
-  getAuctionItem,
-  getAuctionItemPriceSeries,
-  getAuctionItemPrices,
-  listAuctionItems
 } from '../api/client.js';
+import {
+  fetchTrackedMarketItem,
+  fetchTrackedMarketItems,
+  fetchTrackedMarketItemSeries,
+  fetchTrackedMarketItemSummary,
+} from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
 import { escapeHTML } from '../utils/security.js';
 
@@ -237,7 +239,7 @@ export function renderMarketPage(container) {
         filter = filter ? `${searchFilter} AND ${filter}` : searchFilter;
       }
 
-      const data = await listAuctionItems({
+      const data = await fetchTrackedMarketItems({
         filter,
         language: getMarketApiLanguage(),
         pageSize: 10,
@@ -500,7 +502,7 @@ async function renderMarketItemView(container, itemId, { showBackButton = true }
   if (window.lucide) window.lucide.createIcons();
 
   try {
-    const data = await getAuctionItem(itemId, getMarketApiLanguage());
+    const data = await fetchTrackedMarketItem({ itemId, language: getMarketApiLanguage() });
     if (!isActiveMarketDetailView(viewState)) return;
     const item = data.item || data;
 
@@ -551,17 +553,9 @@ async function loadPriceChart(viewState, days = 1) {
   updateMarketRangeStats(days, null);
 
   try {
-    const now = new Date();
-    const startTime = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-
-    // Choose interval based on range
-    let interval = 'INTERVAL_DAY';
-    if (days <= 3) interval = 'INTERVAL_HOUR';
-
-    const marketData = await getAuctionItemPriceSeries(itemId, {
-      startTime: startTime.toISOString(),
-      endTime: now.toISOString(),
-      interval: interval,
+    const marketData = await fetchTrackedMarketItemSeries({
+      itemId,
+      days,
       language: getMarketApiLanguage(),
     });
     if (!isActiveMarketDetailView(viewState)) return;
@@ -776,13 +770,13 @@ async function enrichMarketItems(items) {
     }
 
     try {
-      const [latestPrice, marketBaseline7d] = await Promise.all([
-        getLatestMarketSnapshot(item.id),
-        getMarketBaseline(item.id, 7),
-      ]);
+      const summary = await fetchTrackedMarketItemSummary({
+        itemId: item.id,
+        language: getMarketApiLanguage(),
+      });
       const snapshot = {
-        price: Number(latestPrice.price || 0),
-        marketBaseline7d: Number(marketBaseline7d || 0),
+        price: Number(summary.price || 0),
+        marketBaseline7d: Number(summary.marketBaseline7d || 0),
       };
       marketItemDetailsCache.set(item.id, snapshot);
       return {
@@ -803,16 +797,11 @@ async function enrichMarketItems(items) {
 }
 
 async function getLatestMarketSnapshot(itemId) {
-  const now = new Date();
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const data = await getAuctionItemPrices(itemId, {
-    pageSize: 1,
-    orderBy: 'created_at desc',
-    startTime: oneDayAgo.toISOString(),
-    endTime: now.toISOString(),
+  const data = await fetchTrackedMarketItemSummary({
+    itemId,
     language: getMarketApiLanguage(),
   });
-  return data.prices?.[0] || data.auctionItemPrices?.[0] || data.items?.[0] || {};
+  return data.latestPrice || {};
 }
 
 function mergePriceSeries(marketSeries, referenceSeries) {
@@ -912,21 +901,6 @@ function getLinePointRadius(points, days) {
   if (points <= 10) return 2.5;
   if (points <= 24) return 1.5;
   return 0;
-}
-
-async function getMarketBaseline(itemId, days) {
-  const now = new Date();
-  const startTime = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-  const interval = days <= 3 ? 'INTERVAL_HOUR' : 'INTERVAL_DAY';
-  const data = await getAuctionItemPriceSeries(itemId, {
-    startTime: startTime.toISOString(),
-    endTime: now.toISOString(),
-    interval,
-    language: getMarketApiLanguage(),
-  });
-  const marketSeries = data.priceSeries || data.series || data.prices || [];
-  const values = marketSeries.map((entry) => Number(entry.priceAverage || entry.priceAvg || entry.average || entry.avg || 0));
-  return getMedianPrice(values);
 }
 
 function getMedianPrice(values) {
