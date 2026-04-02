@@ -16,6 +16,28 @@ function getNowIso() {
   return new Date().toISOString();
 }
 
+function getIsoWeekKey(dateInput = new Date()) {
+  const sourceDate = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  const utcDate = new Date(Date.UTC(
+    sourceDate.getUTCFullYear(),
+    sourceDate.getUTCMonth(),
+    sourceDate.getUTCDate(),
+  ));
+  const weekday = (utcDate.getUTCDay() + 6) % 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() - weekday + 3);
+
+  const firstThursday = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 4));
+  const firstWeekday = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstWeekday + 3);
+
+  const weekNumber = 1 + Math.round((utcDate - firstThursday) / (7 * 24 * 60 * 60 * 1000));
+  return `${utcDate.getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+}
+
+function buildLeaderboardFilterKey({ metric = 'rankedPoints', seasonId = '', ranked = false } = {}) {
+  return `${String(metric || 'rankedPoints')}:${String(seasonId || 'all')}:${ranked ? 'ranked' : 'all'}`;
+}
+
 function normalizePlayer(player = {}) {
   if (!player?.id) {
     throw new Error('Player id is required');
@@ -94,6 +116,17 @@ function ensureSqliteReady() {
 
     CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
       ON player_stats_snapshots(season_id, ranked);
+
+    CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
+      filter_key TEXT NOT NULL,
+      week_key TEXT NOT NULL,
+      ranks_json TEXT NOT NULL,
+      saved_at TEXT NOT NULL,
+      PRIMARY KEY (filter_key, week_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
+      ON leaderboard_rank_snapshots(filter_key);
   `);
 }
 
@@ -158,6 +191,21 @@ async function ensurePostgresReady() {
   await postgresClient`
     CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
       ON player_stats_snapshots(season_id, ranked)
+  `;
+
+  await postgresClient`
+    CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
+      filter_key TEXT NOT NULL,
+      week_key TEXT NOT NULL,
+      ranks_json JSONB NOT NULL,
+      saved_at TEXT NOT NULL,
+      PRIMARY KEY (filter_key, week_key)
+    )
+  `;
+
+  await postgresClient`
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
+      ON leaderboard_rank_snapshots(filter_key)
   `;
 }
 
@@ -439,6 +487,151 @@ export async function savePlayerWealthHistorySnapshot({ player, history }) {
   };
 }
 
+async function readLeaderboardRankSnapshots(filterKey) {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT week_key, ranks_json, saved_at
+      FROM leaderboard_rank_snapshots
+      WHERE filter_key = ${filterKey}
+      ORDER BY week_key ASC
+    `;
+
+    return rows.map((row) => ({
+      weekKey: row.week_key,
+      ranks: row.ranks_json || {},
+      savedAt: row.saved_at,
+    }));
+  }
+
+  const rows = sqliteDb.prepare(`
+    SELECT week_key, ranks_json, saved_at
+    FROM leaderboard_rank_snapshots
+    WHERE filter_key = ?
+    ORDER BY week_key ASC
+  `).all(filterKey);
+
+  return rows.map((row) => ({
+    weekKey: row.week_key,
+    ranks: parseJsonSafely(row.ranks_json, {}),
+    savedAt: row.saved_at,
+  }));
+}
+
+async function writeLeaderboardRankSnapshot(filterKey, weekKey, ranks, savedAt) {
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      INSERT INTO leaderboard_rank_snapshots (
+        filter_key,
+        week_key,
+        ranks_json,
+        saved_at
+      )
+      VALUES (
+        ${filterKey},
+        ${weekKey},
+        ${postgresClient.json(ranks || {})},
+        ${savedAt}
+      )
+      ON CONFLICT (filter_key, week_key) DO UPDATE SET
+        ranks_json = EXCLUDED.ranks_json,
+        saved_at = EXCLUDED.saved_at
+    `;
+    return;
+  }
+
+  sqliteDb.prepare(`
+    INSERT INTO leaderboard_rank_snapshots (
+      filter_key,
+      week_key,
+      ranks_json,
+      saved_at
+    )
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(filter_key, week_key) DO UPDATE SET
+      ranks_json = excluded.ranks_json,
+      saved_at = excluded.saved_at
+  `).run(filterKey, weekKey, JSON.stringify(ranks || {}), savedAt);
+}
+
+async function pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys) {
+  if (!Array.isArray(keepWeekKeys) || !keepWeekKeys.length) {
+    return;
+  }
+
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      DELETE FROM leaderboard_rank_snapshots
+      WHERE filter_key = ${filterKey}
+        AND NOT (week_key = ANY(${postgresClient.array(keepWeekKeys)}))
+    `;
+    return;
+  }
+
+  const placeholders = keepWeekKeys.map(() => '?').join(', ');
+  sqliteDb.prepare(`
+    DELETE FROM leaderboard_rank_snapshots
+    WHERE filter_key = ?
+      AND week_key NOT IN (${placeholders})
+  `).run(filterKey, ...keepWeekKeys);
+}
+
+async function annotateLeaderboardRankChanges(items, { metric = 'rankedPoints', seasonId = '', ranked = false } = {}) {
+  const filterKey = buildLeaderboardFilterKey({ metric, seasonId, ranked });
+  const snapshots = await readLeaderboardRankSnapshots(filterKey);
+  const now = new Date();
+  const currentWeekKey = getIsoWeekKey(now);
+  const previousWeekKey = getIsoWeekKey(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+  const previousSnapshot = snapshots.find((entry) => entry.weekKey === previousWeekKey) || null;
+  const currentRanks = {};
+
+  const annotatedItems = items.map((entry, index) => {
+    const rank = index + 1;
+    const playerId = String(entry?.player?.id || '');
+    if (playerId) {
+      currentRanks[playerId] = rank;
+    }
+
+    const previousRank = Number(previousSnapshot?.ranks?.[playerId] || 0);
+    let rankChange = { state: 'same', delta: 0 };
+
+    if (!previousSnapshot) {
+      rankChange = { state: 'same', delta: 0 };
+    } else if (!previousRank) {
+      rankChange = { state: 'new', delta: 0 };
+    } else if (previousRank > rank) {
+      rankChange = { state: 'up', delta: previousRank - rank };
+    } else if (previousRank < rank) {
+      rankChange = { state: 'down', delta: rank - previousRank };
+    }
+
+    return {
+      ...entry,
+      rank,
+      rankChange,
+    };
+  });
+
+  const savedAt = now.toISOString();
+  await writeLeaderboardRankSnapshot(filterKey, currentWeekKey, currentRanks, savedAt);
+
+  const keepWeekKeys = Array.from(new Set(
+    [...snapshots.map((entry) => entry.weekKey), currentWeekKey].sort().slice(-8),
+  ));
+  await pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys);
+
+  return {
+    items: annotatedItems,
+    baseline: {
+      filterKey,
+      period: 'week',
+      currentWeekKey,
+      previousWeekKey,
+      savedAt,
+      hasPreviousSnapshot: Boolean(previousSnapshot),
+    },
+  };
+}
+
 export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
   await ensureReady();
   let rows;
@@ -509,12 +702,15 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
     .sort((left, right) => right.metricValue - left.metricValue)
     .slice(0, Math.max(1, Math.min(Number(limit) || 50, 200)));
 
+  const annotated = await annotateLeaderboardRankChanges(items, { metric, seasonId, ranked });
+
   return {
-    items,
+    items: annotated.items,
     totalSize: rows.length,
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),
+    baseline: annotated.baseline,
   };
 }
 

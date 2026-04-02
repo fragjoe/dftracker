@@ -16,7 +16,6 @@ const METRIC_KEYS = [
 ];
 
 let leaderboardViewRequestId = 0;
-const LEADERBOARD_RANK_SNAPSHOT_KEY = 'dftracker_leaderboard_rank_snapshot_v1';
 
 export async function renderLeaderboardPage(container) {
   const requestId = ++leaderboardViewRequestId;
@@ -282,14 +281,7 @@ export async function renderLeaderboardPage(container) {
       });
 
       if (requestId !== leaderboardViewRequestId || loadId !== latestLoadId) return;
-      latestLeaderboardItems = annotateRankChanges({
-        items: data.items || [],
-        filterKey: getRankSnapshotFilterKey({
-          metric: metricInput.value,
-          seasonId: seasonInput.value,
-          ranked: modeInput.value === 'true',
-        }),
-      });
+      latestLeaderboardItems = data.items || [];
       renderLeaderboardFromCache();
 
       const freshEntry = (data.items || []).find((item) => item.fetchedAt || item.statsUpdatedAt);
@@ -371,7 +363,7 @@ function renderLeaderboardTableRow(entry, index, metricKey) {
 
   return `
     <tr class="leaderboard-table-row" data-player-query="${playerQuery}">
-      <td class="leaderboard-cell-rank">${rankValue}</td>
+      <td class="leaderboard-cell-rank">${entry.rank || rankValue}</td>
       <td>
         <div class="leaderboard-cell-player-name">${player.name || player.deltaForceId || 'Unknown'}</div>
         <div class="leaderboard-cell-player-id text-mono">${player.deltaForceId || player.id || '-'}</div>
@@ -417,100 +409,6 @@ function renderRankChangeBadge(rankChange = {}) {
       <i data-lucide="minus" style="width: 12px; height: 12px;"></i>-
     </span>
   `;
-}
-
-function annotateRankChanges({ items, filterKey }) {
-  const snapshots = readRankSnapshots();
-  const now = new Date();
-  const currentWeekKey = getIsoWeekKey(now);
-  const previousWeekKey = getIsoWeekKey(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-  const filterSnapshot = snapshots[filterKey] || {};
-  const weeklySnapshots = (filterSnapshot && typeof filterSnapshot.weeks === 'object' && filterSnapshot.weeks)
-    ? filterSnapshot.weeks
-    : {};
-  const previousSnapshot = weeklySnapshots[previousWeekKey]?.ranks || null;
-  const currentSnapshot = {};
-
-  const annotated = items.map((entry, index) => {
-    const rank = index + 1;
-    const playerId = entry?.player?.id || '';
-    currentSnapshot[playerId] = rank;
-
-    const previousRank = previousSnapshot ? Number(previousSnapshot[playerId] || 0) : 0;
-    let rankChange = { state: 'same', delta: 0 };
-    if (!previousSnapshot) {
-      rankChange = { state: 'same', delta: 0 };
-    } else if (!previousRank) {
-      rankChange = { state: 'new', delta: 0 };
-    } else if (previousRank > rank) {
-      rankChange = { state: 'up', delta: previousRank - rank };
-    } else if (previousRank < rank) {
-      rankChange = { state: 'down', delta: rank - previousRank };
-    }
-
-    return {
-      ...entry,
-      rank,
-      rankChange,
-    };
-  });
-
-  weeklySnapshots[currentWeekKey] = {
-    savedAt: now.toISOString(),
-    ranks: currentSnapshot,
-  };
-  snapshots[filterKey] = {
-    weeks: pruneWeeklySnapshots(weeklySnapshots),
-  };
-  writeRankSnapshots(snapshots);
-  return annotated;
-}
-
-function getRankSnapshotFilterKey({ metric, seasonId, ranked }) {
-  return `${metric}:${seasonId || 'all'}:${ranked ? 'ranked' : 'all'}`;
-}
-
-function readRankSnapshots() {
-  try {
-    return JSON.parse(localStorage.getItem(LEADERBOARD_RANK_SNAPSHOT_KEY) || '{}');
-  } catch (error) {
-    return {};
-  }
-}
-
-function writeRankSnapshots(snapshots) {
-  try {
-    localStorage.setItem(LEADERBOARD_RANK_SNAPSHOT_KEY, JSON.stringify(snapshots));
-  } catch (error) {
-    // Ignore write failure and keep leaderboard functional.
-  }
-}
-
-function pruneWeeklySnapshots(weeks) {
-  const sortedKeys = Object.keys(weeks).sort();
-  const keepKeys = sortedKeys.slice(-8);
-  const pruned = {};
-  keepKeys.forEach((key) => {
-    pruned[key] = weeks[key];
-  });
-  return pruned;
-}
-
-function getIsoWeekKey(date) {
-  const utcDate = new Date(Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate(),
-  ));
-  const weekday = (utcDate.getUTCDay() + 6) % 7;
-  utcDate.setUTCDate(utcDate.getUTCDate() - weekday + 3);
-
-  const firstThursday = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 4));
-  const firstWeekday = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstWeekday + 3);
-
-  const weekNumber = 1 + Math.round((utcDate - firstThursday) / (7 * 24 * 60 * 60 * 1000));
-  return `${utcDate.getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
 }
 
 function formatMetricValue(metricKey, metricValue, stats) {

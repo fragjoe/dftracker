@@ -91,6 +91,21 @@ async function ensurePostgresSchema() {
     CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
       ON player_stats_snapshots(season_id, ranked)
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
+      filter_key TEXT NOT NULL,
+      week_key TEXT NOT NULL,
+      ranks_json JSONB NOT NULL,
+      saved_at TEXT NOT NULL,
+      PRIMARY KEY (filter_key, week_key)
+    )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
+      ON leaderboard_rank_snapshots(filter_key)
+  `;
 }
 
 function readSqliteRows() {
