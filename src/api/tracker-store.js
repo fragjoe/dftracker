@@ -200,6 +200,7 @@ function fallbackFetchLeaderboard({ metric = 'rankedPoints', seasonId = '', rank
     seasonId,
     ranked,
     source: 'browser',
+    stale: true,
   });
 }
 
@@ -260,7 +261,12 @@ export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonI
       return await fallbackFetchLeaderboard({ metric, seasonId, ranked, limit });
     }
 
-    return await response.json();
+    const payload = await response.json();
+    return {
+      ...payload,
+      stale: false,
+      source: 'server',
+    };
   } catch (error) {
     return await fallbackFetchLeaderboard({ metric, seasonId, ranked, limit });
   }

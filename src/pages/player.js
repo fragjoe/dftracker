@@ -136,6 +136,10 @@ function getFreshCacheEntry(cache, key, maxAgeMs) {
   return entry;
 }
 
+function getAnyCacheEntry(cache, key) {
+  return cache.get(key) || null;
+}
+
 function setCacheEntry(cache, key, value) {
   cache.set(key, {
     value,
@@ -924,9 +928,6 @@ async function loadPlayerData(container, query, { hideSearchOnSuccess = false } 
       errorTitle = t('player.notFoundTitle');
       errorHint = t('player.notFoundHint');
       errorIcon = 'user-search';
-    } else if (isAppErrorKind(err, 'maintenance')) {
-      errorTitle = t('player.maintenanceTitle');
-      errorHint = t('player.maintenanceHint');
     }
 
     container.querySelector('#player-search-shell')?.classList.remove('hidden');
@@ -1238,18 +1239,6 @@ function renderPlayerProfile(container, player, requestId) {
       return;
     }
 
-    if (resourceState.stats === 'maintenance') {
-      if (statsToolbar) {
-        statsToolbar.style.display = 'flex';
-      }
-      resourceStatus.style.display = 'block';
-      resourceStatus.innerHTML = renderSectionEmptyState({
-        message: t('player.maintenanceHint'),
-        className: '',
-      });
-      return;
-    }
-
     if (resourceState.stats !== 'ready') {
       if (statsToolbar) {
         statsToolbar.style.display = 'flex';
@@ -1424,12 +1413,11 @@ function renderPlayerProfile(container, player, requestId) {
         statsWrapper.innerHTML = '';
         updatePlayerResourceStatus();
       } else {
-        if (isAppErrorKind(err, 'maintenance')) {
-          setStatsContextNote(t('player.maintenanceHint'));
-          resourceState.stats = 'maintenance';
-          statsWrapper.style.display = 'none';
-          statsWrapper.innerHTML = '';
-          updatePlayerResourceStatus();
+        if (anyStatsCache?.value?.status === 'ready' && anyStatsCache.value.response?.stats) {
+          setStatsContextNote(t('player.cachedFallbackNotice'));
+          renderResolvedStats(anyStatsCache.value.response, seasonId, availabilityMap, availabilityCacheKey, {
+            preserveContextNote: true,
+          });
           return;
         }
 
@@ -1906,6 +1894,7 @@ export async function renderWealthPage(container) {
       <div id="wealth-toolbar" class="stats-toolbar mb-lg" style="display: none;">
         <span id="wealth-last-update" class="stats-last-update text-muted"></span>
       </div>
+      <div id="wealth-context-note" class="stats-context-note" style="display: none;"></div>
       <div id="wealth-resource-status">
         ${renderSectionLoadingState({
           message: t('player.loadingResources'),
@@ -1918,13 +1907,52 @@ export async function renderWealthPage(container) {
 
     const resourceStatus = contentEl.querySelector('#wealth-resource-status');
     const wealthToolbar = contentEl.querySelector('#wealth-toolbar');
+    const wealthContextNote = contentEl.querySelector('#wealth-context-note');
     const stashWrapper = contentEl.querySelector('#stash-wrapper');
     const historyWrapper = contentEl.querySelector('#stash-history-wrapper');
     const resourceState = {
       stash: 'loading',
       history: 'loading',
     };
+    const staleState = {
+      stash: false,
+      history: false,
+    };
     let selectedHistoryRange = '30d';
+
+    const setWealthContextNote = (message = '') => {
+      if (!wealthContextNote) return;
+      if (!message) {
+        wealthContextNote.style.display = 'none';
+        wealthContextNote.innerHTML = '';
+        return;
+      }
+
+      wealthContextNote.style.display = 'flex';
+      wealthContextNote.innerHTML = `
+        <div class="stats-context-note__content">
+          <i data-lucide="info" style="width: 14px; height: 14px;"></i>
+          <span>${message}</span>
+        </div>
+        <button type="button" class="stats-context-note__close" aria-label="Close notice">
+          <i data-lucide="x" style="width: 14px; height: 14px;"></i>
+        </button>
+      `;
+
+      const closeButton = wealthContextNote.querySelector('.stats-context-note__close');
+      if (closeButton) {
+        closeButton.addEventListener('click', () => setWealthContextNote(''), { once: true });
+      }
+
+      if (window.lucide) {
+        setTimeout(() => window.lucide.createIcons(), 10);
+      }
+    };
+
+    const syncWealthContextNote = () => {
+      const shouldShowCachedNotice = staleState.stash || staleState.history;
+      setWealthContextNote(shouldShowCachedNotice ? t('player.wealthCachedNotice') : '');
+    };
 
     const renderWealthRangeTabs = () => {
       const wealthRangeTabs = contentEl.querySelector('#wealth-range-tabs');
@@ -1943,7 +1971,6 @@ export async function renderWealthPage(container) {
       const hasPending = states.includes('pending');
       const hasLoading = states.includes('loading');
       const hasReady = states.includes('ready');
-      const hasMaintenance = states.includes('maintenance');
       const isHistoryOnlyLoading = resourceState.stash === 'ready' && resourceState.history === 'loading';
       const isHistoryOnlyPending = resourceState.stash === 'ready' && resourceState.history === 'pending';
 
@@ -1989,18 +2016,6 @@ export async function renderWealthPage(container) {
         return;
       }
 
-      if (hasMaintenance) {
-        if (wealthToolbar) {
-          wealthToolbar.style.display = hasReady ? 'flex' : 'none';
-        }
-        resourceStatus.style.display = 'block';
-        resourceStatus.innerHTML = renderSectionEmptyState({
-          message: t('player.maintenanceHint'),
-          className: '',
-        });
-        return;
-      }
-
       if (!hasReady) {
         if (wealthToolbar) {
           wealthToolbar.style.display = 'none';
@@ -2027,12 +2042,16 @@ export async function renderWealthPage(container) {
       player,
       stashWrapper,
       resourceState,
+      staleState,
+      syncWealthContextNote,
       updatePlayerResourceStatus,
     });
     loadStashChart(player.id, requestId, {
       player,
       historyWrapper,
       resourceState,
+      staleState,
+      syncWealthContextNote,
       updatePlayerResourceStatus,
       range: selectedHistoryRange,
     });
@@ -2049,18 +2068,19 @@ export async function renderWealthPage(container) {
         player,
         historyWrapper,
         resourceState,
+        staleState,
+        syncWealthContextNote,
         updatePlayerResourceStatus,
         range: selectedHistoryRange,
       });
     });
   } catch (error) {
     console.error('Wealth page error:', error);
-    const isMaintenance = isAppErrorKind(error, 'maintenance');
     contentEl.innerHTML = `
       <div class="empty-state" style="padding: var(--space-xl) 0">
         <div class="empty-icon" style="color: var(--accent-red); margin-bottom: var(--space-md);"><i data-lucide="alert-triangle" style="width: 48px; height: 48px;"></i></div>
-        <div class="empty-text" style="color: var(--accent-red)">${isMaintenance ? t('player.maintenanceTitle') : t('player.errorTitle')}</div>
-        <div class="empty-hint">${isMaintenance ? t('player.maintenanceHint') : t('player.errorHint')}</div>
+        <div class="empty-text" style="color: var(--accent-red)">${t('player.errorTitle')}</div>
+        <div class="empty-hint">${t('player.errorHint')}</div>
       </div>
     `;
   }
@@ -2075,12 +2095,17 @@ async function loadStashValue(playerId, requestId, controls = {}) {
   if (!stashWrapper) return;
   const player = controls.player || getActivePlayerProfileSummary();
   const resourceState = controls.resourceState || null;
+  const staleState = controls.staleState || null;
+  const syncWealthContextNote = controls.syncWealthContextNote || (() => {});
   const updatePlayerResourceStatus = controls.updatePlayerResourceStatus || (() => {});
   const freshStashCache = getFreshCacheEntry(playerStashCache, playerId, PLAYER_CACHE_MAX_AGE_MS.stash);
+  const anyStashCache = getAnyCacheEntry(playerStashCache, playerId);
 
   stashWrapper.style.display = 'none';
   stashWrapper.innerHTML = '';
   if (freshStashCache?.value?.status === 'ready' && freshStashCache.value.response?.stash) {
+    if (staleState) staleState.stash = false;
+    syncWealthContextNote();
     setWealthLastUpdate(freshStashCache.value.response.stash.updatedAt || freshStashCache.value.response.stash.createdAt || '');
     stashWrapper.innerHTML = renderStashValue(freshStashCache.value.response.stash);
     stashWrapper.style.display = 'block';
@@ -2095,6 +2120,8 @@ async function loadStashValue(playerId, requestId, controls = {}) {
   }
 
   if (freshStashCache?.value?.status === 'empty') {
+    if (staleState) staleState.stash = false;
+    syncWealthContextNote();
     setWealthLastUpdate('');
     if (resourceState) {
       resourceState.stash = 'empty';
@@ -2129,6 +2156,8 @@ async function loadStashValue(playerId, requestId, controls = {}) {
     if (isStalePlayerRequest(requestId) || !stashWrapper.isConnected) return;
 
     if (result?.stash) {
+      if (staleState) staleState.stash = false;
+      syncWealthContextNote();
       setCacheEntry(playerStashCache, playerId, {
         status: 'ready',
         response: result,
@@ -2159,11 +2188,20 @@ async function loadStashValue(playerId, requestId, controls = {}) {
   } catch (err) {
     if (isStalePlayerRequest(requestId) || !stashWrapper.isConnected) return;
     console.error('Stash summary error:', err);
-    if (resourceState && isAppErrorKind(err, 'maintenance')) {
-      resourceState.stash = 'maintenance';
+    if (anyStashCache?.value?.status === 'ready' && anyStashCache.value.response?.stash) {
+      if (staleState) staleState.stash = true;
+      syncWealthContextNote();
+      setWealthLastUpdate(anyStashCache.value.response.stash.updatedAt || anyStashCache.value.response.stash.createdAt || '');
+      stashWrapper.innerHTML = renderStashValue(anyStashCache.value.response.stash);
+      stashWrapper.style.display = 'block';
+      if (resourceState) {
+        resourceState.stash = 'ready';
+      }
       updatePlayerResourceStatus();
       return;
     }
+    if (staleState) staleState.stash = false;
+    syncWealthContextNote();
     setCacheEntry(playerStashCache, playerId, { status: 'empty' });
     setWealthLastUpdate('');
     stashWrapper.style.display = 'none';
@@ -2206,15 +2244,20 @@ async function loadStashChart(playerId, requestId, controls = {}) {
   if (!historyWrapper) return;
   const player = controls.player || getActivePlayerProfileSummary();
   const resourceState = controls.resourceState || null;
+  const staleState = controls.staleState || null;
+  const syncWealthContextNote = controls.syncWealthContextNote || (() => {});
   const updatePlayerResourceStatus = controls.updatePlayerResourceStatus || (() => {});
   const range = controls.range || '30d';
   const historyCacheKey = getWealthHistoryCacheKey(playerId, range);
   const freshHistoryCache = getFreshCacheEntry(playerHistoryCache, historyCacheKey, getWealthHistoryCacheMaxAge(range));
+  const anyHistoryCache = getAnyCacheEntry(playerHistoryCache, historyCacheKey);
   const rangeTabsMarkup = renderWealthRangeTabs(range);
 
   historyWrapper.style.display = 'none';
   historyWrapper.innerHTML = '';
   if (freshHistoryCache?.value?.status === 'ready' && Array.isArray(freshHistoryCache.value.series) && freshHistoryCache.value.series.length > 0) {
+    if (staleState) staleState.history = false;
+    syncWealthContextNote();
     const didRender = await renderHistoricalStashSeries(historyWrapper, [...freshHistoryCache.value.series], rangeTabsMarkup, range);
     if (didRender && resourceState) {
       resourceState.history = 'ready';
@@ -2224,6 +2267,8 @@ async function loadStashChart(playerId, requestId, controls = {}) {
   }
 
   if (freshHistoryCache?.value?.status === 'empty') {
+    if (staleState) staleState.history = false;
+    syncWealthContextNote();
     if (resourceState) {
       resourceState.history = 'empty';
       updatePlayerResourceStatus();
@@ -2304,6 +2349,8 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       status: 'ready',
       series: [...allSeries],
     });
+    if (staleState) staleState.history = false;
+    syncWealthContextNote();
     await renderHistoricalStashSeries(historyWrapper, allSeries, rangeTabsMarkup, range);
     if (resourceState) {
       resourceState.history = 'ready';
@@ -2318,11 +2365,18 @@ async function loadStashChart(playerId, requestId, controls = {}) {
   } catch (err) {
     console.error('Stash chart error:', err);
     if (!historyWrapper.isConnected || isStalePlayerRequest(requestId)) return;
-    if (resourceState && isAppErrorKind(err, 'maintenance')) {
-      resourceState.history = 'maintenance';
+    if (anyHistoryCache?.value?.status === 'ready' && Array.isArray(anyHistoryCache.value.series) && anyHistoryCache.value.series.length > 0) {
+      if (staleState) staleState.history = true;
+      syncWealthContextNote();
+      await renderHistoricalStashSeries(historyWrapper, [...anyHistoryCache.value.series], rangeTabsMarkup, range);
+      if (resourceState) {
+        resourceState.history = 'ready';
+      }
       updatePlayerResourceStatus();
       return;
     }
+    if (staleState) staleState.history = false;
+    syncWealthContextNote();
     setCacheEntry(playerHistoryCache, historyCacheKey, { status: 'empty', series: [] });
     historyWrapper.style.display = 'block';
     if (resourceState) {

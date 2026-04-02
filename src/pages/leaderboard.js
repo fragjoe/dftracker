@@ -288,7 +288,9 @@ export async function renderLeaderboardPage(container) {
       const syncText = freshEntry
         ? `${t('leaderboard.lastSync')}: ${formatDateTime(freshEntry.statsUpdatedAt || freshEntry.fetchedAt)}`
         : '';
-      lastSyncEl.textContent = syncText;
+      lastSyncEl.textContent = data.stale
+        ? [syncText, t('player.cachedFallbackNotice')].filter(Boolean).join(' • ')
+        : syncText;
     } catch (error) {
       if (requestId !== leaderboardViewRequestId || loadId !== latestLoadId) return;
       resourceStatus.style.display = 'block';
