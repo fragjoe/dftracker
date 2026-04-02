@@ -3,13 +3,13 @@ import {
   getPlayerOperationHistoricalStashValue,
   getPlayerOperationStashValue,
   getPlayerOperationStats,
-  listSeasons
 } from '../api/client.js';
 import {
   persistTrackedPlayerProfile,
   persistTrackedPlayerStats,
   persistTrackedPlayerWealth,
   persistTrackedPlayerWealthHistory,
+  fetchTrackedSeasons,
 } from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
 import { escapeHTML, isAppErrorKind, isRetryableAppError } from '../utils/security.js';
@@ -855,7 +855,7 @@ async function loadPlayerData(container, query, { hideSearchOnSuccess = false } 
   `;
 
   const seasonsPromise = allSeasons.length === 0
-    ? listSeasons()
+    ? fetchTrackedSeasons()
         .then((s) => {
           if (s?.seasons) {
             allSeasons = s.seasons.sort((a, b) => b.number - a.number);

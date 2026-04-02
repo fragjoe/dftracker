@@ -271,3 +271,35 @@ export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonI
     return await fallbackFetchLeaderboard({ metric, seasonId, ranked, limit });
   }
 }
+
+export async function fetchTrackedSeasons({ pageSize = 50, pageToken = '', language = '' } = {}) {
+  if (typeof fetch !== 'function') {
+    return { seasons: [], fetchedAt: '', source: 'browser', stale: true };
+  }
+
+  const params = new URLSearchParams({
+    pageSize: String(pageSize),
+    pageToken,
+  });
+
+  if (language) {
+    params.set('language', language);
+  }
+
+  try {
+    const response = await fetch(`${TRACKER_API_BASE}/seasons?${params.toString()}`);
+    if (!response.ok) {
+      return { seasons: [], fetchedAt: '', source: 'browser', stale: true };
+    }
+
+    const payload = await response.json();
+    return {
+      seasons: payload.seasons || [],
+      fetchedAt: payload.fetchedAt || '',
+      source: payload.source || 'database',
+      stale: Boolean(payload.stale),
+    };
+  } catch (error) {
+    return { seasons: [], fetchedAt: '', source: 'browser', stale: true };
+  }
+}

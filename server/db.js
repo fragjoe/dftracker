@@ -7,6 +7,7 @@ const DEFAULT_DB_PATH = resolve(process.cwd(), '.data/dftracker.sqlite');
 const dbPath = process.env.DFTRACKER_DB_PATH || DEFAULT_DB_PATH;
 const postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 const storageMode = postgresUrl ? 'postgres' : 'sqlite';
+const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 let sqliteDb = null;
 let postgresClient = null;
@@ -127,6 +128,18 @@ function ensureSqliteReady() {
 
     CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
       ON leaderboard_rank_snapshots(filter_key);
+
+    CREATE TABLE IF NOT EXISTS seasons_cache (
+      id TEXT PRIMARY KEY,
+      number INTEGER,
+      name TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0,
+      raw_json TEXT NOT NULL,
+      fetched_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
+      ON seasons_cache(active, number);
   `);
 }
 
@@ -206,6 +219,22 @@ async function ensurePostgresReady() {
   await postgresClient`
     CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
       ON leaderboard_rank_snapshots(filter_key)
+  `;
+
+  await postgresClient`
+    CREATE TABLE IF NOT EXISTS seasons_cache (
+      id TEXT PRIMARY KEY,
+      number INTEGER,
+      name TEXT NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT FALSE,
+      raw_json JSONB NOT NULL,
+      fetched_at TEXT NOT NULL
+    )
+  `;
+
+  await postgresClient`
+    CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
+      ON seasons_cache(active, number)
   `;
 }
 
@@ -629,6 +658,115 @@ async function annotateLeaderboardRankChanges(items, { metric = 'rankedPoints', 
       savedAt,
       hasPreviousSnapshot: Boolean(previousSnapshot),
     },
+  };
+}
+
+async function readCachedSeasons() {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT id, number, name, active, raw_json, fetched_at
+      FROM seasons_cache
+      ORDER BY number DESC, name ASC
+    `;
+
+    return rows.map((row) => ({
+      ...row.raw_json,
+      id: row.id,
+      number: Number(row.number || 0),
+      name: row.name,
+      active: Boolean(row.active),
+      fetchedAt: row.fetched_at,
+    }));
+  }
+
+  const rows = sqliteDb.prepare(`
+    SELECT id, number, name, active, raw_json, fetched_at
+    FROM seasons_cache
+    ORDER BY number DESC, name ASC
+  `).all();
+
+  return rows.map((row) => ({
+    ...parseJsonSafely(row.raw_json, {}),
+    id: row.id,
+    number: Number(row.number || 0),
+    name: row.name,
+    active: Boolean(row.active),
+    fetchedAt: row.fetched_at,
+  }));
+}
+
+export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso()) {
+  if (storageMode === 'postgres') {
+    await postgresClient.begin(async (tx) => {
+      await tx`DELETE FROM seasons_cache`;
+      for (const season of seasons) {
+        await tx`
+          INSERT INTO seasons_cache (
+            id,
+            number,
+            name,
+            active,
+            raw_json,
+            fetched_at
+          )
+          VALUES (
+            ${String(season.id || '')},
+            ${Number(season.number || 0)},
+            ${String(season.name || '')},
+            ${Boolean(season.active)},
+            ${tx.json(season || {})},
+            ${fetchedAt}
+          )
+        `;
+      }
+    });
+    return;
+  }
+
+  sqliteDb.exec('BEGIN');
+  try {
+    sqliteDb.prepare('DELETE FROM seasons_cache').run();
+    const statement = sqliteDb.prepare(`
+      INSERT INTO seasons_cache (
+        id,
+        number,
+        name,
+        active,
+        raw_json,
+        fetched_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    seasons.forEach((season) => {
+      statement.run(
+        String(season.id || ''),
+        Number(season.number || 0),
+        String(season.name || ''),
+        season.active ? 1 : 0,
+        JSON.stringify(season || {}),
+        fetchedAt,
+      );
+    });
+    sqliteDb.exec('COMMIT');
+  } catch (error) {
+    sqliteDb.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export async function getCachedSeasonsSummary() {
+  await ensureReady();
+  const seasons = await readCachedSeasons();
+  const fetchedAt = seasons[0]?.fetchedAt || '';
+  const isFresh = fetchedAt
+    ? (Date.now() - new Date(fetchedAt).getTime()) < SEASON_CACHE_TTL_MS
+    : false;
+
+  return {
+    seasons,
+    fetchedAt,
+    isFresh,
   };
 }
 

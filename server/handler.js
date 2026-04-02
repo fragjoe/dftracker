@@ -1,11 +1,20 @@
 import {
+  getCachedSeasonsSummary,
   getLeaderboard,
   getTrackerSummary,
   savePlayerStatsSnapshot,
   savePlayerWealthHistorySnapshot,
   savePlayerWealthSnapshot,
   upsertPlayer,
+  writeCachedSeasons,
 } from './db.js';
+
+const DELTAFORCE_API_BASE = 'https://api.deltaforceapi.com';
+const CONNECT_HEADERS = {
+  'Connect-Protocol-Version': '1',
+  'Content-Type': 'application/json',
+};
+const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -68,6 +77,21 @@ function normalizeTrackerPath(pathname = '') {
   return pathname;
 }
 
+async function fetchUpstreamSeasons({ pageSize = 50, pageToken = '', language = 'LANGUAGE_EN' } = {}) {
+  const response = await fetch(`${DELTAFORCE_API_BASE}/deltaforceapi.gateway.v1.ApiService/ListSeasons`, {
+    method: 'POST',
+    headers: CONNECT_HEADERS,
+    body: JSON.stringify({ language, pageSize, pageToken }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API Error (${response.status}): ${errorText}`);
+  }
+
+  return response.json();
+}
+
 export async function handleTrackerRequest(request, response) {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const rewrittenPath = url.searchParams.get('path');
@@ -99,6 +123,54 @@ export async function handleTrackerRequest(request, response) {
       });
       sendJson(response, 200, payload);
       return;
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/seasons') {
+      const language = url.searchParams.get('language') || 'LANGUAGE_EN';
+      const cached = await getCachedSeasonsSummary();
+      const shouldRefresh = !cached.seasons.length || !cached.isFresh;
+
+      if (!shouldRefresh) {
+        sendJson(response, 200, {
+          seasons: cached.seasons,
+          fetchedAt: cached.fetchedAt,
+          source: 'database',
+          stale: false,
+        });
+        return;
+      }
+
+      try {
+        const upstream = await fetchUpstreamSeasons({
+          pageSize: Number(url.searchParams.get('pageSize') || 50),
+          pageToken: url.searchParams.get('pageToken') || '',
+          language,
+        });
+
+        const fetchedAt = new Date().toISOString();
+        const seasons = Array.isArray(upstream?.seasons) ? upstream.seasons : [];
+        await writeCachedSeasons(seasons, fetchedAt);
+
+        sendJson(response, 200, {
+          seasons,
+          fetchedAt,
+          source: 'upstream',
+          stale: false,
+        });
+        return;
+      } catch (error) {
+        if (cached.seasons.length) {
+          sendJson(response, 200, {
+            seasons: cached.seasons,
+            fetchedAt: cached.fetchedAt,
+            source: 'database',
+            stale: true,
+          });
+          return;
+        }
+
+        throw error;
+      }
     }
 
     if (request.method === 'POST' && pathname === '/tracker-api/players/sync-profile') {

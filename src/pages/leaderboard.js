@@ -1,5 +1,4 @@
-import { listSeasons } from '../api/client.js';
-import { fetchTrackedLeaderboard } from '../api/tracker-store.js';
+import { fetchTrackedLeaderboard, fetchTrackedSeasons } from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
 
 const DEFAULT_METRIC = 'rankedPoints';
@@ -341,7 +340,7 @@ export async function renderLeaderboardPage(container) {
   renderModeOptions();
 
   try {
-    const seasonData = await listSeasons({ pageSize: 50 });
+    const seasonData = await fetchTrackedSeasons({ pageSize: 50 });
     seasons = (seasonData?.seasons || []).sort((left, right) => Number(right.number || 0) - Number(left.number || 0));
   } catch (error) {
     seasons = [];
