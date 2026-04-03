@@ -7,6 +7,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api/cron/(.*)",
+      "destination": "/api/cron/$1"
+    },
+    {
       "source": "/tracker-api/(.*)",
       "destination": "/api/tracker-api?path=$1"
     },
