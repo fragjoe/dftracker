@@ -1,6 +1,6 @@
 import {
   getCachedSeasonsSummary,
-  getCachedMarketCatalogSummary,
+  getMarketCatalogSummary,
   getCachedMarketItemSummary,
   getCachedMarketPriceSummary,
   getCachedMarketSeriesSummary,
@@ -10,7 +10,7 @@ import {
   savePlayerWealthHistorySnapshot,
   savePlayerWealthSnapshot,
   upsertPlayer,
-  writeMarketCatalogCache,
+  replaceMarketCatalog,
   writeMarketItemCache,
   writeMarketItemSeriesCache,
   writeMarketItemSummaryCache,
@@ -197,58 +197,66 @@ export async function handleTrackerRequest(request, response) {
     }
 
     if (request.method === 'GET' && pathname === '/tracker-api/market/items') {
-      const params = {
-        filter: url.searchParams.get('filter') || '',
-        pageToken: url.searchParams.get('pageToken') || '',
-        pageSize: Number(url.searchParams.get('pageSize') || 10),
-        language: url.searchParams.get('language') || 'LANGUAGE_EN',
-      };
-      const cached = await getCachedMarketCatalogSummary(params);
+      const language = url.searchParams.get('language') || 'LANGUAGE_EN';
+      const search = url.searchParams.get('search') || '';
+      const pageToken = url.searchParams.get('pageToken') || '';
+      const pageSize = Number(url.searchParams.get('pageSize') || 10);
+      let catalog = await getMarketCatalogSummary({ language, search, pageToken, pageSize });
 
-      if (cached.isFresh) {
-        sendJson(response, 200, {
-          items: cached.items,
-          nextPageToken: cached.nextPageToken,
-          fetchedAt: cached.fetchedAt,
-          source: 'database',
-          stale: false,
-        });
-        return;
-      }
+      if (!catalog.isFresh || !catalog.items.length) {
+        try {
+          let nextPageToken = '';
+          const allItems = [];
 
-      try {
-        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
-          filter: params.filter,
-          pageToken: params.pageToken,
-          pageSize: params.pageSize,
-          language: params.language,
-        });
-        const payload = {
-          items: upstream.items || upstream.auctionItems || [],
-          nextPageToken: upstream.nextPageToken || '',
-        };
-        const fetchedAt = new Date().toISOString();
-        await writeMarketCatalogCache(params, payload, fetchedAt);
-        sendJson(response, 200, {
-          ...payload,
-          fetchedAt,
-          source: 'upstream',
-          stale: false,
-        });
-        return;
-      } catch (error) {
-        if (cached.items?.length) {
+          do {
+            const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+              filter: '',
+              pageToken: nextPageToken,
+              pageSize: 100,
+              language,
+            });
+            const pageItems = upstream.items || upstream.auctionItems || [];
+            allItems.push(...pageItems);
+            nextPageToken = upstream.nextPageToken || '';
+          } while (nextPageToken);
+
+          const fetchedAt = new Date().toISOString();
+          await replaceMarketCatalog(language, allItems, fetchedAt);
+          catalog = await getMarketCatalogSummary({ language, search, pageToken, pageSize });
           sendJson(response, 200, {
-            items: cached.items,
-            nextPageToken: cached.nextPageToken,
-            fetchedAt: cached.fetchedAt,
-            source: 'database',
-            stale: true,
+            items: catalog.items,
+            nextPageToken: catalog.nextPageToken,
+            totalSize: catalog.totalSize,
+            fetchedAt: catalog.fetchedAt,
+            source: 'upstream',
+            stale: false,
           });
           return;
+        } catch (error) {
+          if (catalog.items.length || catalog.fetchedAt) {
+            sendJson(response, 200, {
+              items: catalog.items,
+              nextPageToken: catalog.nextPageToken,
+              totalSize: catalog.totalSize,
+              fetchedAt: catalog.fetchedAt,
+              source: 'database',
+              stale: true,
+            });
+            return;
+          }
+          throw error;
         }
-        throw error;
       }
+
+      sendJson(response, 200, {
+        items: catalog.items,
+        nextPageToken: catalog.nextPageToken,
+        totalSize: catalog.totalSize,
+        fetchedAt: catalog.fetchedAt,
+        source: 'database',
+        stale: false,
+      });
+      return;
     }
 
     if (request.method === 'GET' && pathname === '/tracker-api/market/item') {

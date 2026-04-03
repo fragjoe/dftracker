@@ -46,6 +46,26 @@ function buildMarketCatalogCacheKey({ filter = '', pageToken = '', pageSize = 10
   return `${language}:${pageSize}:${pageToken}:${filter}`;
 }
 
+function decodeMarketOffsetToken(token = '') {
+  const numeric = Number(token || 0);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return numeric;
+  }
+
+  try {
+    const decoded = Buffer.from(String(token), 'base64url').toString('utf8');
+    const parsed = Number(decoded || 0);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function encodeMarketOffsetToken(offset = 0) {
+  const safeOffset = Math.max(0, Number(offset || 0));
+  return Buffer.from(String(safeOffset), 'utf8').toString('base64url');
+}
+
 function getMarketSeriesTtlMs(days = 1) {
   return Number(days) <= 3 ? 30 * 60 * 1000 : 2 * 60 * 60 * 1000;
 }
@@ -1199,6 +1219,147 @@ export async function getCachedMarketSeriesSummary(itemId, language = '', days =
   return {
     ...(cached || { payload: null, fetchedAt: '' }),
     isFresh: isFreshTimestamp(cached?.fetchedAt, getMarketSeriesTtlMs(days)),
+  };
+}
+
+async function readAllMarketItems(language = '') {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT item_json, fetched_at
+      FROM market_item_cache
+      WHERE language = ${String(language || '')}
+      ORDER BY item_id ASC
+    `;
+
+    return rows.map((row) => ({
+      item: row.item_json || {},
+      fetchedAt: row.fetched_at,
+    }));
+  }
+
+  const rows = sqliteDb.prepare(`
+    SELECT item_json, fetched_at
+    FROM market_item_cache
+    WHERE language = ?
+    ORDER BY item_id ASC
+  `).all(String(language || ''));
+
+  return rows.map((row) => ({
+    item: parseJsonSafely(row.item_json, {}),
+    fetchedAt: row.fetched_at,
+  }));
+}
+
+export async function replaceMarketCatalog(language = '', items = [], fetchedAt = getNowIso()) {
+  await ensureReady();
+  const normalizedLanguage = String(language || '');
+  const normalizedItems = Array.isArray(items) ? items.filter((item) => item?.id) : [];
+
+  if (storageMode === 'postgres') {
+    await postgresClient.begin(async (tx) => {
+      await tx`
+        DELETE FROM market_item_cache
+        WHERE language = ${normalizedLanguage}
+      `;
+
+      for (const item of normalizedItems) {
+        await tx`
+          INSERT INTO market_item_cache (
+            item_id,
+            language,
+            item_json,
+            fetched_at
+          )
+          VALUES (
+            ${String(item.id)},
+            ${normalizedLanguage},
+            ${tx.json(item || {})},
+            ${fetchedAt}
+          )
+        `;
+      }
+    });
+    return;
+  }
+
+  sqliteDb.exec('BEGIN');
+  try {
+    sqliteDb.prepare(`
+      DELETE FROM market_item_cache
+      WHERE language = ?
+    `).run(normalizedLanguage);
+
+    const statement = sqliteDb.prepare(`
+      INSERT INTO market_item_cache (
+        item_id,
+        language,
+        item_json,
+        fetched_at
+      )
+      VALUES (?, ?, ?, ?)
+    `);
+
+    normalizedItems.forEach((item) => {
+      statement.run(
+        String(item.id),
+        normalizedLanguage,
+        JSON.stringify(item || {}),
+        fetchedAt,
+      );
+    });
+
+    sqliteDb.exec('COMMIT');
+  } catch (error) {
+    sqliteDb.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export async function getMarketCatalogSummary({ language = '', search = '', pageSize = 10, pageToken = '' } = {}) {
+  await ensureReady();
+  const rows = await readAllMarketItems(language);
+  const fetchedAt = rows[0]?.fetchedAt || '';
+  const isFresh = isFreshTimestamp(fetchedAt, MARKET_CATALOG_TTL_MS);
+  const query = String(search || '').trim().toLowerCase();
+
+  const filtered = rows
+    .map((row) => row.item)
+    .filter(Boolean)
+    .filter((item) => {
+      if (!query) return true;
+      const haystacks = [
+        item.name,
+        item.langEn,
+        item.langZhHans,
+        item.displayName,
+        item.description,
+        item.categoryName,
+        item.category,
+        item.type,
+        item.id,
+      ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+      return haystacks.some((value) => value.includes(query));
+    })
+    .sort((left, right) => {
+      const leftName = String(left.name || left.langEn || left.displayName || left.id || '').toLowerCase();
+      const rightName = String(right.name || right.langEn || right.displayName || right.id || '').toLowerCase();
+      return leftName.localeCompare(rightName);
+    });
+
+  const safePageSize = Math.max(1, Math.min(Number(pageSize) || 10, 50));
+  const offset = decodeMarketOffsetToken(pageToken);
+  const items = filtered.slice(offset, offset + safePageSize);
+  const nextOffset = offset + safePageSize;
+  const nextPageToken = nextOffset < filtered.length ? encodeMarketOffsetToken(nextOffset) : '';
+
+  return {
+    items,
+    nextPageToken,
+    fetchedAt,
+    isFresh,
+    totalSize: filtered.length,
   };
 }
 

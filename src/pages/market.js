@@ -35,20 +35,8 @@ async function getChartConstructor() {
   return chartConstructorPromise;
 }
 
-function getMarketSearchField() {
-  return getCurrentLanguage() === 'zh' ? 'lang_zh_hans' : 'lang_en';
-}
-
 function getMarketApiLanguage() {
   return getCurrentLanguage() === 'zh' ? LANGUAGE_ZH_HANS : LANGUAGE_EN;
-}
-
-function escapeMarketFilterValue(value = '') {
-  return String(value)
-    .trim()
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\s+/g, ' ');
 }
 
 function getLocale() {
@@ -231,16 +219,9 @@ export function renderMarketPage(container) {
     }
 
     try {
-      let filter = currentFilter;
-      if (currentSearch) {
-        const searchValue = escapeMarketFilterValue(currentSearch);
-        const searchField = getMarketSearchField();
-        const searchFilter = `${searchField} : "${searchValue}"`;
-        filter = filter ? `${searchFilter} AND ${filter}` : searchFilter;
-      }
-
       const data = await fetchTrackedMarketItems({
-        filter,
+        filter: currentFilter,
+        search: currentSearch,
         language: getMarketApiLanguage(),
         pageSize: 10,
         pageToken: currentPageToken,

@@ -304,9 +304,10 @@ export async function fetchTrackedSeasons({ pageSize = 50, pageToken = '', langu
   }
 }
 
-export async function fetchTrackedMarketItems({ filter = '', pageToken = '', pageSize = 10, language = '' } = {}) {
+export async function fetchTrackedMarketItems({ filter = '', search = '', pageToken = '', pageSize = 10, language = '' } = {}) {
   const params = new URLSearchParams({
     filter,
+    search,
     pageToken,
     pageSize: String(pageSize),
   });
