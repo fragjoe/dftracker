@@ -1,5 +1,4 @@
 const TRACKER_API_BASE = '/tracker-api';
-const TRACKER_STORAGE_KEY = 'dftracker_tracker_store_v1';
 
 import {
   getAuctionItem,
@@ -26,6 +25,10 @@ function canUseTrackerNetwork() {
     return false;
   }
   return true;
+}
+
+function canUseMockClientFallback() {
+  return !canUseTrackerNetwork();
 }
 
 async function postTrackerData(path, payload) {
@@ -62,190 +65,10 @@ function getRangeStartIso(range = '30d') {
   return new Date(now - offsetMs).toISOString();
 }
 
-function canUseLocalStorage() {
-  return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
-}
-
-function readLocalTrackerStore() {
-  if (!canUseLocalStorage()) {
-    return {
-      players: {},
-      statsSnapshots: {},
-      wealthSnapshots: {},
-      wealthHistorySnapshots: {},
-    };
-  }
-
-  try {
-    return {
-      players: {},
-      statsSnapshots: {},
-      wealthSnapshots: {},
-      wealthHistorySnapshots: {},
-      ...JSON.parse(localStorage.getItem(TRACKER_STORAGE_KEY) || '{}'),
-    };
-  } catch (error) {
-    return {
-      players: {},
-      statsSnapshots: {},
-      wealthSnapshots: {},
-      wealthHistorySnapshots: {},
-    };
-  }
-}
-
-function writeLocalTrackerStore(store) {
-  if (!canUseLocalStorage()) return;
-  localStorage.setItem(TRACKER_STORAGE_KEY, JSON.stringify(store));
-}
-
-function normalizePlayer(player = {}) {
-  if (!player?.id) return null;
-  const now = new Date().toISOString();
-  return {
-    id: String(player.id),
-    deltaForceId: String(player.deltaForceId || ''),
-    name: String(player.name || player.deltaForceId || player.id),
-    levelOperations: Number.isFinite(Number(player.levelOperations))
-      ? Number(player.levelOperations)
-      : null,
-    registeredAt: player.registeredAt ? String(player.registeredAt) : '',
-    firstSeenAt: player.firstSeenAt || now,
-    lastSeenAt: now,
-  };
-}
-
-function upsertLocalPlayer(player) {
-  const normalized = normalizePlayer(player);
-  if (!normalized) return null;
-
-  const store = readLocalTrackerStore();
-  const existing = store.players[normalized.id];
-  store.players[normalized.id] = {
-    ...existing,
-    ...normalized,
-    firstSeenAt: existing?.firstSeenAt || normalized.firstSeenAt,
-    lastSeenAt: normalized.lastSeenAt,
-  };
-  writeLocalTrackerStore(store);
-  return store.players[normalized.id];
-}
-
-function buildStatsKey(playerId, seasonId = '', ranked = false) {
-  return `${playerId}:${seasonId || ''}:${ranked ? '1' : '0'}`;
-}
-
-function fallbackPersistProfile(player) {
-  const storedPlayer = upsertLocalPlayer(player);
-  return Promise.resolve(storedPlayer ? { ok: true, player: storedPlayer } : null);
-}
-
-function fallbackPersistStats({ player, seasonId = '', ranked = false, stats }) {
-  const storedPlayer = upsertLocalPlayer(player);
-  if (!storedPlayer || !stats) return Promise.resolve(null);
-
-  const store = readLocalTrackerStore();
-  const fetchedAt = new Date().toISOString();
-  store.statsSnapshots[buildStatsKey(storedPlayer.id, seasonId, ranked)] = {
-    playerId: storedPlayer.id,
-    seasonId: String(seasonId || ''),
-    ranked: Boolean(ranked),
-    stats,
-    statsUpdatedAt: stats.updatedAt || '',
-    fetchedAt,
-  };
-  writeLocalTrackerStore(store);
-  return Promise.resolve({ ok: true, playerId: storedPlayer.id, fetchedAt });
-}
-
-function fallbackPersistWealth({ player, stash }) {
-  const storedPlayer = upsertLocalPlayer(player);
-  if (!storedPlayer || !stash) return Promise.resolve(null);
-
-  const store = readLocalTrackerStore();
-  const fetchedAt = new Date().toISOString();
-  store.wealthSnapshots[storedPlayer.id] = {
-    playerId: storedPlayer.id,
-    stash,
-    stashUpdatedAt: stash.updatedAt || stash.createdAt || '',
-    fetchedAt,
-  };
-  writeLocalTrackerStore(store);
-  return Promise.resolve({ ok: true, playerId: storedPlayer.id, fetchedAt });
-}
-
-function fallbackPersistWealthHistory({ player, history }) {
-  const storedPlayer = upsertLocalPlayer(player);
-  if (!storedPlayer || !Array.isArray(history)) return Promise.resolve(null);
-
-  const latestEntryAt = history.reduce((latest, entry) => {
-    const candidate = entry?.updatedAt || entry?.createdAt || entry?.time || '';
-    if (!candidate) return latest;
-    if (!latest) return String(candidate);
-    return new Date(candidate) > new Date(latest) ? String(candidate) : latest;
-  }, '');
-
-  const store = readLocalTrackerStore();
-  const fetchedAt = new Date().toISOString();
-  store.wealthHistorySnapshots[storedPlayer.id] = {
-    playerId: storedPlayer.id,
-    history,
-    latestEntryAt,
-    pointsCount: history.length,
-    fetchedAt,
-  };
-  writeLocalTrackerStore(store);
-  return Promise.resolve({ ok: true, playerId: storedPlayer.id, fetchedAt });
-}
-
-function fallbackFetchLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
-  const store = readLocalTrackerStore();
-  const players = store.players || {};
-  const items = Object.values(store.statsSnapshots || {})
-    .filter((entry) => String(entry.seasonId || '') === String(seasonId || ''))
-    .filter((entry) => Boolean(entry.ranked) === Boolean(ranked))
-    .map((entry) => {
-      const player = players[entry.playerId] || {};
-      const stats = entry.stats || {};
-      return {
-        player: {
-          id: player.id || entry.playerId,
-          deltaForceId: player.deltaForceId || '',
-          name: player.name || player.deltaForceId || entry.playerId,
-          levelOperations: player.levelOperations ?? null,
-          registeredAt: player.registeredAt || '',
-        },
-        metric,
-        metricValue: Number(stats?.[metric] || 0),
-        seasonId: entry.seasonId || '',
-        ranked: Boolean(entry.ranked),
-        statsUpdatedAt: entry.statsUpdatedAt || '',
-        fetchedAt: entry.fetchedAt || '',
-        stats,
-      };
-    })
-    .sort((left, right) => right.metricValue - left.metricValue)
-    .slice(0, Math.max(1, Math.min(Number(limit) || 50, 200)));
-
-  return Promise.resolve({
-    items,
-    totalSize: Object.values(store.statsSnapshots || {})
-      .filter((entry) => String(entry.seasonId || '') === String(seasonId || ''))
-      .filter((entry) => Boolean(entry.ranked) === Boolean(ranked))
-      .length,
-    metric,
-    seasonId,
-    ranked,
-    source: 'browser',
-    stale: true,
-  });
-}
-
 export function persistTrackedPlayerProfile(player) {
   if (!player?.id) return Promise.resolve(null);
   return postTrackerData('/players/sync-profile', { player })
-    .then((result) => result || fallbackPersistProfile(player))
-    .catch(() => fallbackPersistProfile(player));
+    .catch(() => null);
 }
 
 export function persistTrackedPlayerStats({ player, seasonId = '', ranked = false, stats }) {
@@ -256,8 +79,7 @@ export function persistTrackedPlayerStats({ player, seasonId = '', ranked = fals
     ranked,
     stats,
   })
-    .then((result) => result || fallbackPersistStats({ player, seasonId, ranked, stats }))
-    .catch(() => fallbackPersistStats({ player, seasonId, ranked, stats }));
+    .catch(() => null);
 }
 
 export function persistTrackedPlayerWealth({ player, stash }) {
@@ -266,8 +88,7 @@ export function persistTrackedPlayerWealth({ player, stash }) {
     player,
     stash,
   })
-    .then((result) => result || fallbackPersistWealth({ player, stash }))
-    .catch(() => fallbackPersistWealth({ player, stash }));
+    .catch(() => null);
 }
 
 export function persistTrackedPlayerWealthHistory({ player, history }) {
@@ -276,13 +97,20 @@ export function persistTrackedPlayerWealthHistory({ player, history }) {
     player,
     history,
   })
-    .then((result) => result || fallbackPersistWealthHistory({ player, history }))
-    .catch(() => fallbackPersistWealthHistory({ player, history }));
+    .catch(() => null);
 }
 
 export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
-  if (typeof fetch !== 'function') {
-    return fallbackFetchLeaderboard({ metric, seasonId, ranked, limit });
+  if (!canUseTrackerNetwork()) {
+    return {
+      items: [],
+      totalSize: 0,
+      metric,
+      seasonId,
+      ranked,
+      source: 'browser',
+      stale: true,
+    };
   }
 
   const params = new URLSearchParams({
@@ -293,19 +121,26 @@ export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonI
   });
 
   try {
-    const response = await fetch(`${TRACKER_API_BASE}/leaderboard?${params.toString()}`);
+    const response = await fetch(getTrackerUrl(`/leaderboard?${params.toString()}`));
     if (!response.ok) {
-      return await fallbackFetchLeaderboard({ metric, seasonId, ranked, limit });
+      throw new Error(`Leaderboard request failed (${response.status})`);
     }
 
     const payload = await response.json();
     return {
       ...payload,
-      stale: false,
-      source: 'server',
+      source: payload.source || 'server',
     };
   } catch (error) {
-    return await fallbackFetchLeaderboard({ metric, seasonId, ranked, limit });
+    return {
+      items: [],
+      totalSize: 0,
+      metric,
+      seasonId,
+      ranked,
+      source: 'browser',
+      stale: true,
+    };
   }
 }
 
@@ -324,6 +159,10 @@ export async function fetchTrackedPlayer({ id = '', deltaForceId = '', name = ''
     }
   } catch (error) {
     // Fall through to direct client fallback for tests and offline local mocks.
+  }
+
+  if (!canUseMockClientFallback()) {
+    throw new Error('Player resolve request failed');
   }
 
   const payload = await getPlayer({ id, deltaForceId, name });
@@ -352,6 +191,10 @@ export async function fetchTrackedPlayerStats({ playerId = '', seasonId = '', ra
     // Fall through to direct client fallback for tests and offline local mocks.
   }
 
+  if (!canUseMockClientFallback()) {
+    throw new Error('Player stats request failed');
+  }
+
   return getPlayerOperationStats(playerId, { seasonId, ranked });
 }
 
@@ -366,6 +209,10 @@ export async function fetchTrackedPlayerWealth({ playerId = '' } = {}) {
     }
   } catch (error) {
     // Fall through to direct client fallback for tests and offline local mocks.
+  }
+
+  if (!canUseMockClientFallback()) {
+    throw new Error('Player wealth request failed');
   }
 
   try {
@@ -386,6 +233,10 @@ export async function fetchTrackedPlayerWealthHistory({ playerId = '', range = '
     }
   } catch (error) {
     // Fall through to direct client fallback for tests and offline local mocks.
+  }
+
+  if (!canUseMockClientFallback()) {
+    throw new Error('Player wealth history request failed');
   }
 
   const payload = await getPlayerOperationHistoricalStashValue(playerId, {
@@ -427,17 +278,17 @@ export async function fetchTrackedSeasons({ pageSize = 50, pageToken = '', langu
     // Fall through to direct client fallback for tests and offline local mocks.
   }
 
-  try {
-    const payload = await listSeasons({ pageSize, pageToken, language });
-    return {
-      seasons: payload.seasons || [],
-      fetchedAt: '',
-      source: 'upstream',
-      stale: false,
-    };
-  } catch (error) {
+  if (!canUseMockClientFallback()) {
     return { seasons: [], fetchedAt: '', source: 'browser', stale: true };
   }
+
+  const payload = await listSeasons({ pageSize, pageToken, language });
+  return {
+    seasons: payload.seasons || [],
+    fetchedAt: '',
+    source: 'upstream',
+    stale: false,
+  };
 }
 
 export async function fetchTrackedMarketItems({ filter = '', search = '', pageToken = '', pageSize = 10, language = '' } = {}) {
@@ -463,6 +314,10 @@ export async function fetchTrackedMarketItems({ filter = '', search = '', pageTo
     // Fall through to direct client fallback for tests and offline local mocks.
   }
 
+  if (!canUseMockClientFallback()) {
+    throw new Error('Market items request failed');
+  }
+
   return listAuctionItems({ filter, pageToken, pageSize, language });
 }
 
@@ -484,6 +339,10 @@ export async function fetchTrackedMarketItem({ itemId = '', language = '' } = {}
     // Fall through to direct client fallback for tests and offline local mocks.
   }
 
+  if (!canUseMockClientFallback()) {
+    throw new Error('Market item request failed');
+  }
+
   return getAuctionItem(itemId, language);
 }
 
@@ -503,6 +362,10 @@ export async function fetchTrackedMarketItemSummary({ itemId = '', language = ''
     }
   } catch (error) {
     // Fall through to direct client fallback for tests and offline local mocks.
+  }
+
+  if (!canUseMockClientFallback()) {
+    throw new Error('Market item summary request failed');
   }
 
   const now = new Date();
@@ -549,6 +412,10 @@ export async function fetchTrackedMarketItemSeries({ itemId = '', days = 1, lang
     }
   } catch (error) {
     // Fall through to direct client fallback for tests and offline local mocks.
+  }
+
+  if (!canUseMockClientFallback()) {
+    throw new Error('Market item series request failed');
   }
 
   const now = new Date();

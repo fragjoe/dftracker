@@ -27,7 +27,6 @@ const CONNECT_HEADERS = {
   'Connect-Protocol-Version': '1',
   'Content-Type': 'application/json',
 };
-const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PLAYER_STATS_TTL_MS = 20 * 60 * 1000;
 const PLAYER_WEALTH_TTL_MS = 20 * 60 * 1000;
 const PLAYER_WEALTH_HISTORY_TTL_MS = 3 * 60 * 60 * 1000;
@@ -213,7 +212,6 @@ async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } =
       updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
       source: 'database',
       stale: false,
-      ttlMs: PLAYER_STATS_TTL_MS,
     };
   }
 
@@ -242,7 +240,6 @@ async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } =
         updatedAt: response.stats.updatedAt || '',
         source: 'upstream',
         stale: false,
-        ttlMs: PLAYER_STATS_TTL_MS,
       };
     }
 
@@ -255,7 +252,6 @@ async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } =
         updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
         source: 'database',
         stale: true,
-        ttlMs: PLAYER_STATS_TTL_MS,
       };
     }
     throw error;
@@ -271,7 +267,6 @@ async function getTrackedPlayerWealth({ player } = {}) {
       updatedAt: cached.stashUpdatedAt || cached.stash?.updatedAt || cached.stash?.createdAt || '',
       source: 'database',
       stale: false,
-      ttlMs: PLAYER_WEALTH_TTL_MS,
     };
   }
 
@@ -296,7 +291,6 @@ async function getTrackedPlayerWealth({ player } = {}) {
         updatedAt: response.stash.updatedAt || response.stash.createdAt || '',
         source: 'upstream',
         stale: false,
-        ttlMs: PLAYER_WEALTH_TTL_MS,
       };
     }
 
@@ -309,7 +303,6 @@ async function getTrackedPlayerWealth({ player } = {}) {
         updatedAt: cached.stashUpdatedAt || cached.stash?.updatedAt || cached.stash?.createdAt || '',
         source: 'database',
         stale: true,
-        ttlMs: PLAYER_WEALTH_TTL_MS,
       };
     }
     throw error;
@@ -321,12 +314,10 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
   if (cached.isFresh && Array.isArray(cached.history) && cached.history.length) {
     return {
       history: filterHistoryByRange(cached.history, range),
-      fullHistory: cached.history,
       fetchedAt: cached.fetchedAt,
       updatedAt: cached.latestEntryAt || '',
       source: 'database',
       stale: false,
-      ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
     };
   }
 
@@ -353,12 +344,10 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
     if (Array.isArray(response)) {
       return {
         history: filterHistoryByRange(response, range),
-        fullHistory: response,
         fetchedAt: new Date().toISOString(),
         updatedAt: response[response.length - 1]?.updatedAt || response[response.length - 1]?.createdAt || response[response.length - 1]?.time || '',
         source: 'upstream',
         stale: false,
-        ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
       };
     }
 
@@ -367,12 +356,10 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
     if (Array.isArray(cached.history) && cached.history.length) {
       return {
         history: filterHistoryByRange(cached.history, range),
-        fullHistory: cached.history,
         fetchedAt: cached.fetchedAt,
         updatedAt: cached.latestEntryAt || '',
         source: 'database',
         stale: true,
-        ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
       };
     }
     throw error;

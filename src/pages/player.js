@@ -3,7 +3,6 @@ import {
   fetchTrackedPlayerStats,
   fetchTrackedPlayerWealth,
   fetchTrackedPlayerWealthHistory,
-  persistTrackedPlayerProfile,
   fetchTrackedSeasons,
 } from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
@@ -773,7 +772,6 @@ async function loadPlayerData(container, query, { hideSearchOnSuccess = false } 
     localStorage.setItem('lastPlayerQuery', query);
     addRecentSearch(player);
     persistActivePlayerProfile(player);
-    void persistTrackedPlayerProfile(player);
 
     const playerName = player.name || player.deltaForceId || 'Unknown';
     window.updateMetadata({

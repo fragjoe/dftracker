@@ -45,10 +45,6 @@ function buildLeaderboardFilterKey({ metric = 'rankedPoints', seasonId = '', ran
   return `${String(metric || 'rankedPoints')}:${String(seasonId || 'all')}:${ranked ? 'ranked' : 'all'}`;
 }
 
-function buildMarketCatalogCacheKey({ filter = '', pageToken = '', pageSize = 10, language = '' } = {}) {
-  return `${language}:${pageSize}:${pageToken}:${filter}`;
-}
-
 function decodeMarketOffsetToken(token = '') {
   const numeric = Number(token || 0);
   if (Number.isFinite(numeric) && numeric >= 0) {
@@ -965,104 +961,6 @@ export async function getCachedSeasonsSummary() {
   };
 }
 
-async function readMarketCatalogCache(params) {
-  const cacheKey = buildMarketCatalogCacheKey(params);
-  if (storageMode === 'postgres') {
-    const rows = await postgresClient`
-      SELECT items_json, next_page_token, fetched_at
-      FROM market_catalog_cache
-      WHERE cache_key = ${cacheKey}
-      LIMIT 1
-    `;
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      items: row.items_json?.items || [],
-      nextPageToken: row.next_page_token || '',
-      fetchedAt: row.fetched_at,
-    };
-  }
-
-  const row = sqliteDb.prepare(`
-    SELECT items_json, next_page_token, fetched_at
-    FROM market_catalog_cache
-    WHERE cache_key = ?
-    LIMIT 1
-  `).get(cacheKey);
-  if (!row) return null;
-  const parsed = parseJsonSafely(row.items_json, {});
-  return {
-    items: parsed.items || [],
-    nextPageToken: row.next_page_token || '',
-    fetchedAt: row.fetched_at,
-  };
-}
-
-export async function writeMarketCatalogCache(params, payload = {}, fetchedAt = getNowIso()) {
-  await ensureReady();
-  const cacheKey = buildMarketCatalogCacheKey(params);
-  const normalizedPayload = {
-    items: Array.isArray(payload.items) ? payload.items : [],
-  };
-
-  if (storageMode === 'postgres') {
-    await postgresClient`
-      INSERT INTO market_catalog_cache (
-        cache_key,
-        filter,
-        page_token,
-        page_size,
-        language,
-        items_json,
-        next_page_token,
-        fetched_at
-      )
-      VALUES (
-        ${cacheKey},
-        ${String(params.filter || '')},
-        ${String(params.pageToken || '')},
-        ${Number(params.pageSize || 10)},
-        ${String(params.language || '')},
-        ${postgresClient.json(normalizedPayload)},
-        ${String(payload.nextPageToken || '')},
-        ${fetchedAt}
-      )
-      ON CONFLICT (cache_key) DO UPDATE SET
-        items_json = EXCLUDED.items_json,
-        next_page_token = EXCLUDED.next_page_token,
-        fetched_at = EXCLUDED.fetched_at
-    `;
-    return;
-  }
-
-  sqliteDb.prepare(`
-    INSERT INTO market_catalog_cache (
-      cache_key,
-      filter,
-      page_token,
-      page_size,
-      language,
-      items_json,
-      next_page_token,
-      fetched_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(cache_key) DO UPDATE SET
-      items_json = excluded.items_json,
-      next_page_token = excluded.next_page_token,
-      fetched_at = excluded.fetched_at
-  `).run(
-    cacheKey,
-    String(params.filter || ''),
-    String(params.pageToken || ''),
-    Number(params.pageSize || 10),
-    String(params.language || ''),
-    JSON.stringify(normalizedPayload),
-    String(payload.nextPageToken || ''),
-    fetchedAt,
-  );
-}
-
 async function readMarketItemCache(itemId, language = '') {
   if (storageMode === 'postgres') {
     const rows = await postgresClient`
@@ -1399,15 +1297,6 @@ export async function getCachedPlayerWealthHistorySummary(playerId = '') {
     ...(cached || { history: null, latestEntryAt: '', pointsCount: 0, fetchedAt: '' }),
     isFresh: isFreshTimestamp(cached?.fetchedAt, PLAYER_WEALTH_HISTORY_TTL_MS),
     ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
-  };
-}
-
-export async function getCachedMarketCatalogSummary(params = {}) {
-  await ensureReady();
-  const cached = await readMarketCatalogCache(params);
-  return {
-    ...(cached || { items: [], nextPageToken: '', fetchedAt: '' }),
-    isFresh: isFreshTimestamp(cached?.fetchedAt, MARKET_CATALOG_TTL_MS),
   };
 }
 
