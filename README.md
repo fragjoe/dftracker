@@ -336,3 +336,5 @@ Audit lokal terakhir untuk route `/player` menghasilkan:
 - Performance: sekitar 95 pada audit lokal Lighthouse
 
 Skor performance bisa berbeda tergantung environment deploy, throttling, dan kondisi jaringan.
+
+- Redeploy trigger: 2026-04-03T09:12:05Z
