@@ -1,9 +1,13 @@
 import {
   getCachedSeasonsSummary,
+  getCachedPlayerStatsSummary,
+  getCachedPlayerWealthHistorySummary,
+  getCachedPlayerWealthSummary,
   getMarketCatalogSummary,
   getCachedMarketItemSummary,
   getCachedMarketPriceSummary,
   getCachedMarketSeriesSummary,
+  findTrackedPlayer,
   getLeaderboard,
   refreshLeaderboardBaseline,
   getTrackerSummary,
@@ -24,6 +28,10 @@ const CONNECT_HEADERS = {
   'Content-Type': 'application/json',
 };
 const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PLAYER_STATS_TTL_MS = 20 * 60 * 1000;
+const PLAYER_WEALTH_TTL_MS = 20 * 60 * 1000;
+const PLAYER_WEALTH_HISTORY_TTL_MS = 3 * 60 * 60 * 1000;
+const inflightRefreshes = new Map();
 
 export function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -128,6 +136,249 @@ async function postUpstream(path, body = {}) {
   return response.json();
 }
 
+function getSingleFlightKey(scope, parts = []) {
+  return `${scope}:${parts.map((part) => String(part || '')).join(':')}`;
+}
+
+async function runSingleFlight(scope, parts, factory) {
+  const key = getSingleFlightKey(scope, parts);
+  const existing = inflightRefreshes.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = Promise.resolve()
+    .then(factory)
+    .finally(() => {
+      if (inflightRefreshes.get(key) === promise) {
+        inflightRefreshes.delete(key);
+      }
+    });
+
+  inflightRefreshes.set(key, promise);
+  return promise;
+}
+
+function filterHistoryByRange(history = [], range = '30d') {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const now = Date.now();
+  const cutoffMs = range === '24h'
+    ? now - (24 * 60 * 60 * 1000)
+    : range === '7d'
+      ? now - (7 * 24 * 60 * 60 * 1000)
+      : now - (30 * 24 * 60 * 60 * 1000);
+
+  return safeHistory.filter((entry) => {
+    const rawTime = entry?.time || entry?.createdAt || entry?.updatedAt || entry?.timestamp || '';
+    const entryTime = new Date(rawTime).getTime();
+    return Number.isFinite(entryTime) && entryTime >= cutoffMs;
+  });
+}
+
+async function fetchUpstreamPlayer(query = {}) {
+  const response = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayer', query);
+  const player = response?.player || response;
+  if (!player?.id) {
+    throw new Error('Player not found');
+  }
+  await upsertPlayer(player);
+  return player;
+}
+
+async function getTrackedPlayer(query = {}) {
+  const local = await findTrackedPlayer(query);
+  if (local) {
+    return {
+      player: local,
+      source: 'database',
+      stale: false,
+    };
+  }
+
+  const singleFlightParts = [query.id, query.deltaForceId, query.name];
+  const player = await runSingleFlight('player-resolve', singleFlightParts, () => fetchUpstreamPlayer(query));
+  return {
+    player,
+    source: 'upstream',
+    stale: false,
+  };
+}
+
+async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } = {}) {
+  const cached = await getCachedPlayerStatsSummary({ playerId: player.id, seasonId, ranked });
+  if (cached.isFresh && cached.stats) {
+    return {
+      stats: cached.stats,
+      fetchedAt: cached.fetchedAt,
+      updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
+      source: 'database',
+      stale: false,
+      ttlMs: PLAYER_STATS_TTL_MS,
+    };
+  }
+
+  try {
+    const response = await runSingleFlight('player-stats', [player.id, seasonId, ranked], async () => {
+      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationStats', {
+        playerId: player.id,
+        ...(seasonId ? { seasonId } : {}),
+        ...(ranked ? { ranked: true } : {}),
+      });
+      if (upstream?.stats) {
+        await savePlayerStatsSnapshot({
+          player,
+          seasonId,
+          ranked,
+          stats: upstream.stats,
+        });
+      }
+      return upstream;
+    });
+
+    if (response?.stats) {
+      return {
+        stats: response.stats,
+        fetchedAt: new Date().toISOString(),
+        updatedAt: response.stats.updatedAt || '',
+        source: 'upstream',
+        stale: false,
+        ttlMs: PLAYER_STATS_TTL_MS,
+      };
+    }
+
+    throw new Error('No stats found');
+  } catch (error) {
+    if (cached.stats) {
+      return {
+        stats: cached.stats,
+        fetchedAt: cached.fetchedAt,
+        updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
+        source: 'database',
+        stale: true,
+        ttlMs: PLAYER_STATS_TTL_MS,
+      };
+    }
+    throw error;
+  }
+}
+
+async function getTrackedPlayerWealth({ player } = {}) {
+  const cached = await getCachedPlayerWealthSummary(player.id);
+  if (cached.isFresh && cached.stash) {
+    return {
+      stash: cached.stash,
+      fetchedAt: cached.fetchedAt,
+      updatedAt: cached.stashUpdatedAt || cached.stash?.updatedAt || cached.stash?.createdAt || '',
+      source: 'database',
+      stale: false,
+      ttlMs: PLAYER_WEALTH_TTL_MS,
+    };
+  }
+
+  try {
+    const response = await runSingleFlight('player-wealth', [player.id], async () => {
+      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationStashValue', {
+        playerId: player.id,
+      });
+      if (upstream?.stash) {
+        await savePlayerWealthSnapshot({
+          player,
+          stash: upstream.stash,
+        });
+      }
+      return upstream;
+    });
+
+    if (response?.stash) {
+      return {
+        stash: response.stash,
+        fetchedAt: new Date().toISOString(),
+        updatedAt: response.stash.updatedAt || response.stash.createdAt || '',
+        source: 'upstream',
+        stale: false,
+        ttlMs: PLAYER_WEALTH_TTL_MS,
+      };
+    }
+
+    throw new Error('No wealth data found');
+  } catch (error) {
+    if (cached.stash) {
+      return {
+        stash: cached.stash,
+        fetchedAt: cached.fetchedAt,
+        updatedAt: cached.stashUpdatedAt || cached.stash?.updatedAt || cached.stash?.createdAt || '',
+        source: 'database',
+        stale: true,
+        ttlMs: PLAYER_WEALTH_TTL_MS,
+      };
+    }
+    throw error;
+  }
+}
+
+async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
+  const cached = await getCachedPlayerWealthHistorySummary(player.id);
+  if (cached.isFresh && Array.isArray(cached.history) && cached.history.length) {
+    return {
+      history: filterHistoryByRange(cached.history, range),
+      fullHistory: cached.history,
+      fetchedAt: cached.fetchedAt,
+      updatedAt: cached.latestEntryAt || '',
+      source: 'database',
+      stale: false,
+      ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
+    };
+  }
+
+  try {
+    const response = await runSingleFlight('player-wealth-history', [player.id], async () => {
+      const now = new Date();
+      const startTime = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', {
+        playerId: player.id,
+        pageSize: 200,
+        startTime: startTime.toISOString(),
+        endTime: now.toISOString(),
+      });
+      const history = upstream?.historicalStashValues || upstream?.stashes || upstream?.historicalStashValue || upstream?.series || [];
+      if (Array.isArray(history) && history.length) {
+        await savePlayerWealthHistorySnapshot({
+          player,
+          history,
+        });
+      }
+      return history;
+    });
+
+    if (Array.isArray(response)) {
+      return {
+        history: filterHistoryByRange(response, range),
+        fullHistory: response,
+        fetchedAt: new Date().toISOString(),
+        updatedAt: response[response.length - 1]?.updatedAt || response[response.length - 1]?.createdAt || response[response.length - 1]?.time || '',
+        source: 'upstream',
+        stale: false,
+        ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
+      };
+    }
+
+    throw new Error('No wealth history found');
+  } catch (error) {
+    if (Array.isArray(cached.history) && cached.history.length) {
+      return {
+        history: filterHistoryByRange(cached.history, range),
+        fullHistory: cached.history,
+        fetchedAt: cached.fetchedAt,
+        updatedAt: cached.latestEntryAt || '',
+        source: 'database',
+        stale: true,
+        ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
+      };
+    }
+    throw error;
+  }
+}
+
 export async function handleTrackerRequest(request, response) {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const rewrittenPath = url.searchParams.get('path');
@@ -147,6 +398,52 @@ export async function handleTrackerRequest(request, response) {
         service: 'dftracker-storage',
         ...(await getTrackerSummary()),
       });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/player/resolve') {
+      const payload = await getTrackedPlayer({
+        id: url.searchParams.get('id') || '',
+        deltaForceId: url.searchParams.get('deltaForceId') || '',
+        name: url.searchParams.get('name') || '',
+      });
+      sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/player/stats') {
+      const player = await getTrackedPlayer({
+        id: url.searchParams.get('playerId') || url.searchParams.get('id') || '',
+      });
+      const payload = await getTrackedPlayerStats({
+        player: player.player,
+        seasonId: url.searchParams.get('seasonId') || '',
+        ranked: parseBooleanParam(url.searchParams.get('ranked')),
+      });
+      sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/player/wealth') {
+      const player = await getTrackedPlayer({
+        id: url.searchParams.get('playerId') || url.searchParams.get('id') || '',
+      });
+      const payload = await getTrackedPlayerWealth({
+        player: player.player,
+      });
+      sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/player/wealth-history') {
+      const player = await getTrackedPlayer({
+        id: url.searchParams.get('playerId') || url.searchParams.get('id') || '',
+      });
+      const payload = await getTrackedPlayerWealthHistory({
+        player: player.player,
+        range: url.searchParams.get('range') || '30d',
+      });
+      sendJson(response, 200, payload);
       return;
     }
 
@@ -244,23 +541,26 @@ export async function handleTrackerRequest(request, response) {
 
       if (!catalog.isFresh || !catalog.items.length) {
         try {
-          let nextPageToken = '';
-          const allItems = [];
+          await runSingleFlight('market-catalog', [language], async () => {
+            let nextPageToken = '';
+            const allItems = [];
 
-          do {
-            const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
-              filter: '',
-              pageToken: nextPageToken,
-              pageSize: 100,
-              language,
-            });
-            const pageItems = upstream.items || upstream.auctionItems || [];
-            allItems.push(...pageItems);
-            nextPageToken = upstream.nextPageToken || '';
-          } while (nextPageToken);
+            do {
+              const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+                filter: '',
+                pageToken: nextPageToken,
+                pageSize: 100,
+                language,
+              });
+              const pageItems = upstream.items || upstream.auctionItems || [];
+              allItems.push(...pageItems);
+              nextPageToken = upstream.nextPageToken || '';
+            } while (nextPageToken);
 
-          const fetchedAt = new Date().toISOString();
-          await replaceMarketCatalog(language, allItems, fetchedAt);
+            const fetchedAt = new Date().toISOString();
+            await replaceMarketCatalog(language, allItems, fetchedAt);
+          });
+
           catalog = await getMarketCatalogSummary({ language, search, pageToken, pageSize });
           sendJson(response, 200, {
             items: catalog.items,
@@ -314,7 +614,9 @@ export async function handleTrackerRequest(request, response) {
       }
 
       try {
-        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItem', { id: itemId, language });
+        const upstream = await runSingleFlight('market-item', [itemId, language], () => (
+          postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItem', { id: itemId, language })
+        ));
         const item = upstream.item || upstream;
         const fetchedAt = new Date().toISOString();
         await writeMarketItemCache(itemId, language, item, fetchedAt);
@@ -355,26 +657,28 @@ export async function handleTrackerRequest(request, response) {
       }
 
       try {
-        const now = new Date();
-        const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        const [latestPriceData, baselineData] = await Promise.all([
-          postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPrices', {
-            auctionItemId: itemId,
-            pageSize: 1,
-            orderBy: 'created_at desc',
-            startTime: oneDayAgo.toISOString(),
-            endTime: now.toISOString(),
-            language,
-          }),
-          postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
-            auctionItemId: itemId,
-            startTime: sevenDaysAgo.toISOString(),
-            endTime: now.toISOString(),
-            interval: 'INTERVAL_DAY',
-            language,
-          }),
-        ]);
+        const [latestPriceData, baselineData] = await runSingleFlight('market-item-summary', [itemId, language], async () => {
+          const now = new Date();
+          const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          return Promise.all([
+            postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPrices', {
+              auctionItemId: itemId,
+              pageSize: 1,
+              orderBy: 'created_at desc',
+              startTime: oneDayAgo.toISOString(),
+              endTime: now.toISOString(),
+              language,
+            }),
+            postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
+              auctionItemId: itemId,
+              startTime: sevenDaysAgo.toISOString(),
+              endTime: now.toISOString(),
+              interval: 'INTERVAL_DAY',
+              language,
+            }),
+          ]);
+        });
 
         const latestPrice = latestPriceData.prices?.[0] || latestPriceData.auctionItemPrices?.[0] || latestPriceData.items?.[0] || {};
         const baselineSeries = baselineData.priceSeries || baselineData.series || baselineData.prices || [];
@@ -431,15 +735,17 @@ export async function handleTrackerRequest(request, response) {
       }
 
       try {
-        const now = new Date();
-        const startTime = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-        const interval = days <= 3 ? 'INTERVAL_HOUR' : 'INTERVAL_DAY';
-        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
-          auctionItemId: itemId,
-          startTime: startTime.toISOString(),
-          endTime: now.toISOString(),
-          interval,
-          language,
+        const upstream = await runSingleFlight('market-item-series', [itemId, language, days], async () => {
+          const now = new Date();
+          const startTime = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+          const interval = days <= 3 ? 'INTERVAL_HOUR' : 'INTERVAL_DAY';
+          return postUpstream('/deltaforceapi.gateway.v1.ApiService/GetAuctionItemPriceSeries', {
+            auctionItemId: itemId,
+            startTime: startTime.toISOString(),
+            endTime: now.toISOString(),
+            interval,
+            language,
+          });
         });
         const payload = {
           priceSeries: upstream.priceSeries || upstream.series || upstream.prices || [],

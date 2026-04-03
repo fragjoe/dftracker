@@ -238,13 +238,21 @@ function router() {
 }
 
 function updateStaticLanguageUI() {
-  document.getElementById('nav-player-label').innerText = t('nav.player');
-  document.getElementById('nav-wealth-label').innerText = t('nav.wealth');
-  document.getElementById('nav-leaderboard-label').innerText = t('nav.leaderboard');
-  document.getElementById('nav-market-label').innerText = t('nav.market');
-  document.getElementById('footer-privacy-link').innerText = t('footer.privacy');
-  document.getElementById('footer-terms-link').innerText = t('footer.terms');
-  document.getElementById('footer-support-link').innerText = t('footer.support');
+  const navPlayerLabel = document.getElementById('nav-player-label');
+  const navWealthLabel = document.getElementById('nav-wealth-label');
+  const navLeaderboardLabel = document.getElementById('nav-leaderboard-label');
+  const navMarketLabel = document.getElementById('nav-market-label');
+  const footerPrivacyLink = document.getElementById('footer-privacy-link');
+  const footerTermsLink = document.getElementById('footer-terms-link');
+  const footerSupportLink = document.getElementById('footer-support-link');
+
+  if (navPlayerLabel) navPlayerLabel.innerText = t('nav.player');
+  if (navWealthLabel) navWealthLabel.innerText = t('nav.wealth');
+  if (navLeaderboardLabel) navLeaderboardLabel.innerText = t('nav.leaderboard');
+  if (navMarketLabel) navMarketLabel.innerText = t('nav.market');
+  if (footerPrivacyLink) footerPrivacyLink.innerText = t('footer.privacy');
+  if (footerTermsLink) footerTermsLink.innerText = t('footer.terms');
+  if (footerSupportLink) footerSupportLink.innerText = t('footer.support');
   const storageNoticeText = document.getElementById('storage-notice-text');
   const storageNoticeLink = document.getElementById('storage-notice-link');
   const storageNoticeDismiss = document.getElementById('storage-notice-dismiss');

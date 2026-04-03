@@ -11,6 +11,9 @@ const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MARKET_CATALOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MARKET_ITEM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MARKET_SUMMARY_TTL_MS = 60 * 60 * 1000;
+const PLAYER_STATS_TTL_MS = 20 * 60 * 1000;
+const PLAYER_WEALTH_TTL_MS = 20 * 60 * 1000;
+const PLAYER_WEALTH_HISTORY_TTL_MS = 3 * 60 * 60 * 1000;
 
 let sqliteDb = null;
 let postgresClient = null;
@@ -447,6 +450,80 @@ export async function upsertPlayer(player) {
     return upsertPlayerPostgres(player);
   }
   return upsertPlayerSqlite(player);
+}
+
+export async function findTrackedPlayer({ id = '', deltaForceId = '', name = '' } = {}) {
+  await ensureReady();
+
+  if (storageMode === 'postgres') {
+    let rows = [];
+
+    if (id) {
+      rows = await postgresClient`
+        SELECT id, delta_force_id, name, level_operations, registered_at
+        FROM players
+        WHERE id = ${String(id)}
+        LIMIT 1
+      `;
+    } else if (deltaForceId) {
+      rows = await postgresClient`
+        SELECT id, delta_force_id, name, level_operations, registered_at
+        FROM players
+        WHERE delta_force_id = ${String(deltaForceId)}
+        LIMIT 1
+      `;
+    } else if (name) {
+      rows = await postgresClient`
+        SELECT id, delta_force_id, name, level_operations, registered_at
+        FROM players
+        WHERE LOWER(name) = LOWER(${String(name)})
+        ORDER BY last_seen_at DESC
+        LIMIT 1
+      `;
+    }
+
+    const row = rows[0];
+    return row ? {
+      id: row.id,
+      deltaForceId: row.delta_force_id,
+      name: row.name,
+      levelOperations: row.level_operations,
+      registeredAt: row.registered_at,
+    } : null;
+  }
+
+  let row = null;
+  if (id) {
+    row = sqliteDb.prepare(`
+      SELECT id, delta_force_id, name, level_operations, registered_at
+      FROM players
+      WHERE id = ?
+      LIMIT 1
+    `).get(String(id));
+  } else if (deltaForceId) {
+    row = sqliteDb.prepare(`
+      SELECT id, delta_force_id, name, level_operations, registered_at
+      FROM players
+      WHERE delta_force_id = ?
+      LIMIT 1
+    `).get(String(deltaForceId));
+  } else if (name) {
+    row = sqliteDb.prepare(`
+      SELECT id, delta_force_id, name, level_operations, registered_at
+      FROM players
+      WHERE LOWER(name) = LOWER(?)
+      ORDER BY last_seen_at DESC
+      LIMIT 1
+    `).get(String(name));
+  }
+
+  return row ? {
+    id: row.id,
+    deltaForceId: row.delta_force_id,
+    name: row.name,
+    levelOperations: row.level_operations,
+    registeredAt: row.registered_at,
+  } : null;
 }
 
 export async function savePlayerStatsSnapshot({ player, seasonId = '', ranked = false, stats }) {
@@ -1193,6 +1270,138 @@ function isFreshTimestamp(fetchedAt, ttlMs) {
   return (Date.now() - timestamp) < ttlMs;
 }
 
+async function readPlayerStatsSnapshot(playerId, seasonId = '', ranked = false) {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT stats_json, stats_updated_at, fetched_at
+      FROM player_stats_snapshots
+      WHERE player_id = ${String(playerId)}
+        AND season_id = ${String(seasonId || '')}
+        AND ranked = ${Boolean(ranked)}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      stats: row.stats_json || {},
+      statsUpdatedAt: row.stats_updated_at,
+      fetchedAt: row.fetched_at,
+    };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT stats_json, stats_updated_at, fetched_at
+    FROM player_stats_snapshots
+    WHERE player_id = ?
+      AND season_id = ?
+      AND ranked = ?
+    LIMIT 1
+  `).get(String(playerId), String(seasonId || ''), ranked ? 1 : 0);
+
+  if (!row) return null;
+  return {
+    stats: parseJsonSafely(row.stats_json, {}),
+    statsUpdatedAt: row.stats_updated_at,
+    fetchedAt: row.fetched_at,
+  };
+}
+
+async function readPlayerWealthSnapshot(playerId) {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT stash_json, stash_updated_at, fetched_at
+      FROM player_wealth_snapshots
+      WHERE player_id = ${String(playerId)}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      stash: row.stash_json || {},
+      stashUpdatedAt: row.stash_updated_at,
+      fetchedAt: row.fetched_at,
+    };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT stash_json, stash_updated_at, fetched_at
+    FROM player_wealth_snapshots
+    WHERE player_id = ?
+    LIMIT 1
+  `).get(String(playerId));
+
+  if (!row) return null;
+  return {
+    stash: parseJsonSafely(row.stash_json, {}),
+    stashUpdatedAt: row.stash_updated_at,
+    fetchedAt: row.fetched_at,
+  };
+}
+
+async function readPlayerWealthHistorySnapshot(playerId) {
+  if (storageMode === 'postgres') {
+    const rows = await postgresClient`
+      SELECT history_json, latest_entry_at, points_count, fetched_at
+      FROM player_wealth_history_snapshots
+      WHERE player_id = ${String(playerId)}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      history: row.history_json || [],
+      latestEntryAt: row.latest_entry_at,
+      pointsCount: row.points_count,
+      fetchedAt: row.fetched_at,
+    };
+  }
+
+  const row = sqliteDb.prepare(`
+    SELECT history_json, latest_entry_at, points_count, fetched_at
+    FROM player_wealth_history_snapshots
+    WHERE player_id = ?
+    LIMIT 1
+  `).get(String(playerId));
+
+  if (!row) return null;
+  return {
+    history: parseJsonSafely(row.history_json, []),
+    latestEntryAt: row.latest_entry_at,
+    pointsCount: row.points_count,
+    fetchedAt: row.fetched_at,
+  };
+}
+
+export async function getCachedPlayerStatsSummary({ playerId = '', seasonId = '', ranked = false } = {}) {
+  await ensureReady();
+  const cached = playerId ? await readPlayerStatsSnapshot(playerId, seasonId, ranked) : null;
+  return {
+    ...(cached || { stats: null, statsUpdatedAt: '', fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, PLAYER_STATS_TTL_MS),
+    ttlMs: PLAYER_STATS_TTL_MS,
+  };
+}
+
+export async function getCachedPlayerWealthSummary(playerId = '') {
+  await ensureReady();
+  const cached = playerId ? await readPlayerWealthSnapshot(playerId) : null;
+  return {
+    ...(cached || { stash: null, stashUpdatedAt: '', fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, PLAYER_WEALTH_TTL_MS),
+    ttlMs: PLAYER_WEALTH_TTL_MS,
+  };
+}
+
+export async function getCachedPlayerWealthHistorySummary(playerId = '') {
+  await ensureReady();
+  const cached = playerId ? await readPlayerWealthHistorySnapshot(playerId) : null;
+  return {
+    ...(cached || { history: null, latestEntryAt: '', pointsCount: 0, fetchedAt: '' }),
+    isFresh: isFreshTimestamp(cached?.fetchedAt, PLAYER_WEALTH_HISTORY_TTL_MS),
+    ttlMs: PLAYER_WEALTH_HISTORY_TTL_MS,
+  };
+}
+
 export async function getCachedMarketCatalogSummary(params = {}) {
   await ensureReady();
   const cached = await readMarketCatalogCache(params);
@@ -1373,8 +1582,19 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
 export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
   await ensureReady();
   let rows;
+  let totalSize;
+  const safeMetric = String(metric || 'rankedPoints');
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
 
   if (storageMode === 'postgres') {
+    const countRows = await postgresClient`
+      SELECT COUNT(*)::int AS total
+      FROM player_stats_snapshots
+      WHERE season_id = ${String(seasonId || '')}
+        AND ranked = ${Boolean(ranked)}
+    `;
+    totalSize = Number(countRows[0]?.total || 0);
+
     rows = await postgresClient`
       SELECT
         p.id,
@@ -1392,8 +1612,17 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
         ON p.id = s.player_id
       WHERE s.season_id = ${String(seasonId || '')}
         AND s.ranked = ${Boolean(ranked)}
+      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, p.last_seen_at DESC
+      LIMIT ${safeLimit}
     `;
   } else {
+    totalSize = Number(sqliteDb.prepare(`
+      SELECT COUNT(*) AS total
+      FROM player_stats_snapshots
+      WHERE season_id = ?
+        AND ranked = ?
+    `).get(String(seasonId || ''), ranked ? 1 : 0)?.total || 0);
+
     rows = sqliteDb.prepare(`
       SELECT
         p.id,
@@ -1411,7 +1640,9 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
         ON p.id = s.player_id
       WHERE s.season_id = ?
         AND s.ranked = ?
-    `).all(String(seasonId || ''), ranked ? 1 : 0);
+      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, p.last_seen_at DESC
+      LIMIT ?
+    `).all(String(seasonId || ''), ranked ? 1 : 0, `$.${safeMetric}`, safeLimit);
   }
 
   const items = rows
@@ -1436,9 +1667,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
         fetchedAt: row.fetched_at,
         stats,
       };
-    })
-    .sort((left, right) => right.metricValue - left.metricValue)
-    .slice(0, Math.max(1, Math.min(Number(limit) || 50, 200)));
+    });
 
   const annotated = await annotateLeaderboardRankChanges(items, {
     metric,
@@ -1449,7 +1678,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
 
   return {
     items: annotated.items,
-    totalSize: rows.length,
+    totalSize,
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),
@@ -1465,8 +1694,19 @@ export async function refreshLeaderboardBaseline({
 } = {}) {
   await ensureReady();
   let rows;
+  let totalSize;
+  const safeMetric = String(metric || 'rankedPoints');
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
 
   if (storageMode === 'postgres') {
+    const countRows = await postgresClient`
+      SELECT COUNT(*)::int AS total
+      FROM player_stats_snapshots
+      WHERE season_id = ${String(seasonId || '')}
+        AND ranked = ${Boolean(ranked)}
+    `;
+    totalSize = Number(countRows[0]?.total || 0);
+
     rows = await postgresClient`
       SELECT
         p.id,
@@ -1484,8 +1724,17 @@ export async function refreshLeaderboardBaseline({
         ON p.id = s.player_id
       WHERE s.season_id = ${String(seasonId || '')}
         AND s.ranked = ${Boolean(ranked)}
+      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, p.last_seen_at DESC
+      LIMIT ${safeLimit}
     `;
   } else {
+    totalSize = Number(sqliteDb.prepare(`
+      SELECT COUNT(*) AS total
+      FROM player_stats_snapshots
+      WHERE season_id = ?
+        AND ranked = ?
+    `).get(String(seasonId || ''), ranked ? 1 : 0)?.total || 0);
+
     rows = sqliteDb.prepare(`
       SELECT
         p.id,
@@ -1503,7 +1752,9 @@ export async function refreshLeaderboardBaseline({
         ON p.id = s.player_id
       WHERE s.season_id = ?
         AND s.ranked = ?
-    `).all(String(seasonId || ''), ranked ? 1 : 0);
+      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, p.last_seen_at DESC
+      LIMIT ?
+    `).all(String(seasonId || ''), ranked ? 1 : 0, `$.${safeMetric}`, safeLimit);
   }
 
   const items = rows
@@ -1528,9 +1779,7 @@ export async function refreshLeaderboardBaseline({
         fetchedAt: row.fetched_at,
         stats,
       };
-    })
-    .sort((left, right) => right.metricValue - left.metricValue)
-    .slice(0, Math.max(1, Math.min(Number(limit) || 200, 500)));
+    });
 
   const annotated = await annotateLeaderboardRankChanges(items, {
     metric,
@@ -1541,7 +1790,7 @@ export async function refreshLeaderboardBaseline({
 
   return {
     ok: true,
-    totalSize: rows.length,
+    totalSize,
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),

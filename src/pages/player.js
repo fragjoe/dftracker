@@ -1,18 +1,13 @@
 import {
-  getPlayer,
-  getPlayerOperationHistoricalStashValue,
-  getPlayerOperationStashValue,
-  getPlayerOperationStats,
-} from '../api/client.js';
-import {
+  fetchTrackedPlayer,
+  fetchTrackedPlayerStats,
+  fetchTrackedPlayerWealth,
+  fetchTrackedPlayerWealthHistory,
   persistTrackedPlayerProfile,
-  persistTrackedPlayerStats,
-  persistTrackedPlayerWealth,
-  persistTrackedPlayerWealthHistory,
   fetchTrackedSeasons,
 } from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
-import { escapeHTML, isAppErrorKind, isRetryableAppError } from '../utils/security.js';
+import { escapeHTML, isAppErrorKind } from '../utils/security.js';
 
 let stashChart = null;
 let scoreBreakdownChart = null;
@@ -176,11 +171,6 @@ function getWealthHistoryCacheMaxAge(range = '30d') {
   return PLAYER_CACHE_MAX_AGE_MS.history;
 }
 
-function getWealthHistoryRangeStart(range = '30d') {
-  const config = WEALTH_HISTORY_RANGES.find((item) => item.value === range) || WEALTH_HISTORY_RANGES[2];
-  return new Date(Date.now() - (config.days * 24 * 60 * 60 * 1000));
-}
-
 function renderWealthRangeTabs(selectedRange = '30d') {
   return `
     <div class="wealth-range-tabs" id="wealth-range-tabs" role="tablist" aria-label="${t('player.wealthHistory')} range">
@@ -225,120 +215,8 @@ function destroyPlayerCharts() {
   }
 }
 
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function isStalePlayerRequest(requestId) {
   return requestId !== activePlayerRequestId;
-}
-
-function hasStatsPayload(response) {
-  return Boolean(response && response.stats);
-}
-
-function hasStashPayload(response) {
-  return Boolean(response && response.stash);
-}
-
-function hasHistoricalStashPayload(response) {
-  const allSeries = response?.historicalStashValues || response?.stashes || response?.historicalStashValue || response?.series || [];
-  return allSeries.length > 0;
-}
-
-function isRetryablePendingResourceError(error) {
-  return isRetryableAppError(error);
-}
-
-async function retryPlayerResource(fetcher, {
-  attempts = 4,
-  delayMs = 1800,
-  isReady = value => Boolean(value),
-  requestId = activePlayerRequestId,
-} = {}) {
-  let lastValue = null;
-  let lastError = null;
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (isStalePlayerRequest(requestId)) {
-      return null;
-    }
-
-    try {
-      const value = await fetcher();
-      lastValue = value;
-      if (isReady(value)) {
-        return value;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-
-    if (attempt < attempts - 1) {
-      await wait(delayMs * (attempt + 1));
-    }
-  }
-
-  if (lastError) {
-    throw lastError;
-  }
-
-  return lastValue;
-}
-
-async function pollPlayerResource(fetcher, {
-  requestId = activePlayerRequestId,
-  isReady = value => Boolean(value),
-  isRetryableError = isRetryablePendingResourceError,
-  attemptsPerCycle = 2,
-  attemptDelayMs = 1500,
-  pollIntervalMs = 3500,
-  maxPollMs = 60000,
-  onPending = null,
-} = {}) {
-  const startedAt = Date.now();
-  let lastValue = null;
-  let lastError = null;
-
-  while (!isStalePlayerRequest(requestId) && Date.now() - startedAt <= maxPollMs) {
-    try {
-      const value = await retryPlayerResource(fetcher, {
-        attempts: attemptsPerCycle,
-        delayMs: attemptDelayMs,
-        isReady,
-        requestId,
-      });
-
-      lastValue = value;
-      if (isReady(value)) {
-        return value;
-      }
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableError(error)) {
-        throw error;
-      }
-    }
-
-    if (isStalePlayerRequest(requestId) || Date.now() - startedAt >= maxPollMs) {
-      break;
-    }
-
-    if (onPending) {
-      onPending({
-        elapsedMs: Date.now() - startedAt,
-        lastValue,
-        lastError,
-      });
-    }
-    await wait(pollIntervalMs);
-  }
-
-  if (lastError && !lastValue) {
-    return null;
-  }
-
-  return lastValue;
 }
 
 function getRecentSearches() {
@@ -813,14 +691,7 @@ async function resolvePlayerQuery(query) {
 
   for (const strategy of lookupStrategies) {
     try {
-      const playerData = await retryPlayerResource(() => getPlayer(strategy), {
-        attempts: strategy.name ? 2 : 1,
-        delayMs: 600,
-        isReady: value => {
-          const player = value?.player || value;
-          return isValidResolvedPlayer(player);
-        },
-      });
+      const playerData = await fetchTrackedPlayer(strategy);
       const player = playerData.player || playerData;
 
       if (isValidResolvedPlayer(player)) {
@@ -1141,15 +1012,8 @@ function renderPlayerProfile(container, player, requestId) {
     }
 
     if (!preserveContextNote) {
-      setStatsContextNote('');
+      setStatsContextNote(response?.stale ? t('player.cachedFallbackNotice') : '');
     }
-
-    void persistTrackedPlayerStats({
-      player,
-      seasonId,
-      ranked: modeFilter.value === 'true',
-      stats: response.stats,
-    });
   };
 
   const renderSeasonOptions = (availabilityMap = null) => {
@@ -1179,29 +1043,28 @@ function renderPlayerProfile(container, player, requestId) {
     }
 
     const availabilityMap = { ...(cachedAvailability || {}) };
+    const candidateSeasonIds = Array.from(new Set([
+      prioritizeSeasonId,
+      activeSeasonId,
+      seasonFilter.value,
+    ].filter(Boolean)));
 
-    for (const season of allSeasons) {
+    for (const seasonId of candidateSeasonIds) {
       if (isStalePlayerRequest(requestId)) return;
-      if (availabilityMap[season.id] === 'has_data' || availabilityMap[season.id] === 'no_data') {
+      if (availabilityMap[seasonId] === 'has_data' || availabilityMap[seasonId] === 'no_data') {
         continue;
       }
 
       try {
-        const response = await retryPlayerResource(() => getPlayerOperationStats(player.id, {
-          seasonId: season.id,
+        const response = await fetchTrackedPlayerStats({
+          playerId: player.id,
+          seasonId,
           ranked,
-        }), {
-          attempts: season.id === prioritizeSeasonId ? 2 : 1,
-          delayMs: 800,
-          isReady: hasStatsPayload,
-          requestId,
         });
 
-        availabilityMap[season.id] = response?.stats ? 'has_data' : 'no_data';
+        availabilityMap[seasonId] = response?.stats ? 'has_data' : 'no_data';
       } catch (error) {
-        availabilityMap[season.id] = isAppErrorKind(error, 'not_found')
-          ? 'no_data'
-          : 'unknown';
+        availabilityMap[seasonId] = isAppErrorKind(error, 'not_found') ? 'no_data' : 'unknown';
       }
     }
 
@@ -1256,24 +1119,13 @@ function renderPlayerProfile(container, player, requestId) {
   };
 
   const loadStatsResource = ({ seasonId, ranked, onPending = null }) => {
-    const fetchStats = () => getPlayerOperationStats(player.id, { seasonId, ranked });
-    if (seasonId) {
-      return retryPlayerResource(fetchStats, {
-        attempts: 4,
-        delayMs: 1500,
-        isReady: hasStatsPayload,
-        requestId,
-      });
+    if (typeof onPending === 'function' && !seasonId) {
+      onPending();
     }
-
-    return pollPlayerResource(fetchStats, {
-      attemptsPerCycle: 2,
-      attemptDelayMs: 1500,
-      pollIntervalMs: 4000,
-      maxPollMs: 90000,
-      isReady: hasStatsPayload,
-      requestId,
-      onPending,
+    return fetchTrackedPlayerStats({
+      playerId: player.id,
+      seasonId,
+      ranked,
     });
   };
 
@@ -2138,25 +1990,12 @@ async function loadStashValue(playerId, requestId, controls = {}) {
   }
 
   try {
-    const result = await pollPlayerResource(() => getPlayerOperationStashValue(playerId), {
-      attemptsPerCycle: 2,
-      attemptDelayMs: 1800,
-      pollIntervalMs: 4000,
-      maxPollMs: 90000,
-      isReady: hasStashPayload,
-      requestId,
-      onPending: () => {
-        if (!isStalePlayerRequest(requestId) && stashWrapper.isConnected && resourceState) {
-          resourceState.stash = 'pending';
-          updatePlayerResourceStatus();
-        }
-      },
-    });
+    const result = await fetchTrackedPlayerWealth({ playerId });
 
     if (isStalePlayerRequest(requestId) || !stashWrapper.isConnected) return;
 
     if (result?.stash) {
-      if (staleState) staleState.stash = false;
+      if (staleState) staleState.stash = Boolean(result.stale);
       syncWealthContextNote();
       setCacheEntry(playerStashCache, playerId, {
         status: 'ready',
@@ -2169,10 +2008,6 @@ async function loadStashValue(playerId, requestId, controls = {}) {
         resourceState.stash = 'ready';
         updatePlayerResourceStatus();
       }
-      void persistTrackedPlayerWealth({
-        player,
-        stash: result.stash,
-      });
     } else {
       setCacheEntry(playerStashCache, playerId, { status: 'empty' });
       setWealthLastUpdate('');
@@ -2301,31 +2136,10 @@ async function loadStashChart(playerId, requestId, controls = {}) {
   }
 
   try {
-    const now = new Date();
-    const rangeStart = getWealthHistoryRangeStart(range);
-
-    const data = await pollPlayerResource(() => getPlayerOperationHistoricalStashValue(playerId, {
-      pageSize: 50,
-      startTime: rangeStart.toISOString(),
-      endTime: now.toISOString()
-    }), {
-      attemptsPerCycle: 2,
-      attemptDelayMs: 1800,
-      pollIntervalMs: 4000,
-      maxPollMs: 90000,
-      isReady: hasHistoricalStashPayload,
-      requestId,
-      onPending: () => {
-        if (!isStalePlayerRequest(requestId) && historyWrapper.isConnected && resourceState) {
-          resourceState.history = 'pending';
-          updatePlayerResourceStatus();
-        }
-      },
-    });
+    const data = await fetchTrackedPlayerWealthHistory({ playerId, range });
 
     if (isStalePlayerRequest(requestId) || !historyWrapper.isConnected) return;
-    // Handle multiple possible response structures
-    const allSeries = data?.historicalStashValues || data?.stashes || data?.historicalStashValue || data?.series || [];
+    const allSeries = data?.history || data?.historicalStashValues || data?.stashes || data?.historicalStashValue || data?.series || [];
 
     if (allSeries.length === 0) {
       setCacheEntry(playerHistoryCache, historyCacheKey, { status: 'empty', series: [] });
@@ -2349,18 +2163,12 @@ async function loadStashChart(playerId, requestId, controls = {}) {
       status: 'ready',
       series: [...allSeries],
     });
-    if (staleState) staleState.history = false;
+    if (staleState) staleState.history = Boolean(data.stale);
     syncWealthContextNote();
     await renderHistoricalStashSeries(historyWrapper, allSeries, rangeTabsMarkup, range);
     if (resourceState) {
       resourceState.history = 'ready';
       updatePlayerResourceStatus();
-    }
-    if (range === '30d') {
-      void persistTrackedPlayerWealthHistory({
-        player,
-        history: allSeries,
-      });
     }
   } catch (err) {
     console.error('Stash chart error:', err);
