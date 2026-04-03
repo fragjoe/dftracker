@@ -5,6 +5,7 @@ import {
   getCachedMarketPriceSummary,
   getCachedMarketSeriesSummary,
   getLeaderboard,
+  refreshLeaderboardBaseline,
   getTrackerSummary,
   savePlayerStatsSnapshot,
   savePlayerWealthHistorySnapshot,
@@ -143,6 +144,20 @@ export async function handleTrackerRequest(request, response) {
         seasonId: url.searchParams.get('seasonId') || '',
         ranked: parseBooleanParam(url.searchParams.get('ranked')),
         limit: Number(url.searchParams.get('limit') || 50),
+      });
+      sendJson(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/tracker-api/leaderboard/refresh') {
+      const body = await readJsonBody(request);
+      const payload = await refreshLeaderboardBaseline({
+        metric: body.metric || url.searchParams.get('metric') || 'rankedPoints',
+        seasonId: body.seasonId || url.searchParams.get('seasonId') || '',
+        ranked: parseBooleanParam(
+          typeof body.ranked === 'undefined' ? url.searchParams.get('ranked') : body.ranked,
+        ),
+        limit: Number(body.limit || url.searchParams.get('limit') || 200),
       });
       sendJson(response, 200, payload);
       return;

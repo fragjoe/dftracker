@@ -715,7 +715,12 @@ async function pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys) {
   `).run(filterKey, ...keepWeekKeys);
 }
 
-async function annotateLeaderboardRankChanges(items, { metric = 'rankedPoints', seasonId = '', ranked = false } = {}) {
+async function annotateLeaderboardRankChanges(items, {
+  metric = 'rankedPoints',
+  seasonId = '',
+  ranked = false,
+  persistSnapshot = true,
+} = {}) {
   const filterKey = buildLeaderboardFilterKey({ metric, seasonId, ranked });
   const snapshots = await readLeaderboardRankSnapshots(filterKey);
   const now = new Date();
@@ -752,12 +757,14 @@ async function annotateLeaderboardRankChanges(items, { metric = 'rankedPoints', 
   });
 
   const savedAt = now.toISOString();
-  await writeLeaderboardRankSnapshot(filterKey, currentWeekKey, currentRanks, savedAt);
+  if (persistSnapshot) {
+    await writeLeaderboardRankSnapshot(filterKey, currentWeekKey, currentRanks, savedAt);
 
-  const keepWeekKeys = Array.from(new Set(
-    [...snapshots.map((entry) => entry.weekKey), currentWeekKey].sort().slice(-8),
-  ));
-  await pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys);
+    const keepWeekKeys = Array.from(new Set(
+      [...snapshots.map((entry) => entry.weekKey), currentWeekKey].sort().slice(-8),
+    ));
+    await pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys);
+  }
 
   return {
     items: annotatedItems,
@@ -1433,10 +1440,107 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
     .sort((left, right) => right.metricValue - left.metricValue)
     .slice(0, Math.max(1, Math.min(Number(limit) || 50, 200)));
 
-  const annotated = await annotateLeaderboardRankChanges(items, { metric, seasonId, ranked });
+  const annotated = await annotateLeaderboardRankChanges(items, {
+    metric,
+    seasonId,
+    ranked,
+    persistSnapshot: false,
+  });
 
   return {
     items: annotated.items,
+    totalSize: rows.length,
+    metric,
+    seasonId: String(seasonId || ''),
+    ranked: Boolean(ranked),
+    baseline: annotated.baseline,
+  };
+}
+
+export async function refreshLeaderboardBaseline({
+  metric = 'rankedPoints',
+  seasonId = '',
+  ranked = false,
+  limit = 200,
+} = {}) {
+  await ensureReady();
+  let rows;
+
+  if (storageMode === 'postgres') {
+    rows = await postgresClient`
+      SELECT
+        p.id,
+        p.delta_force_id,
+        p.name,
+        p.level_operations,
+        p.registered_at,
+        s.season_id,
+        s.ranked,
+        s.stats_json,
+        s.stats_updated_at,
+        s.fetched_at
+      FROM player_stats_snapshots s
+      INNER JOIN players p
+        ON p.id = s.player_id
+      WHERE s.season_id = ${String(seasonId || '')}
+        AND s.ranked = ${Boolean(ranked)}
+    `;
+  } else {
+    rows = sqliteDb.prepare(`
+      SELECT
+        p.id,
+        p.delta_force_id,
+        p.name,
+        p.level_operations,
+        p.registered_at,
+        s.season_id,
+        s.ranked,
+        s.stats_json,
+        s.stats_updated_at,
+        s.fetched_at
+      FROM player_stats_snapshots s
+      INNER JOIN players p
+        ON p.id = s.player_id
+      WHERE s.season_id = ?
+        AND s.ranked = ?
+    `).all(String(seasonId || ''), ranked ? 1 : 0);
+  }
+
+  const items = rows
+    .map((row) => {
+      const stats = storageMode === 'postgres'
+        ? (row.stats_json || {})
+        : parseJsonSafely(row.stats_json, {});
+
+      return {
+        player: {
+          id: row.id,
+          deltaForceId: row.delta_force_id,
+          name: row.name,
+          levelOperations: row.level_operations,
+          registeredAt: row.registered_at,
+        },
+        metric,
+        metricValue: Number(stats?.[metric] || 0),
+        seasonId: row.season_id,
+        ranked: Boolean(row.ranked),
+        statsUpdatedAt: row.stats_updated_at,
+        fetchedAt: row.fetched_at,
+        stats,
+      };
+    })
+    .sort((left, right) => right.metricValue - left.metricValue)
+    .slice(0, Math.max(1, Math.min(Number(limit) || 200, 500)));
+
+  const annotated = await annotateLeaderboardRankChanges(items, {
+    metric,
+    seasonId,
+    ranked,
+    persistSnapshot: true,
+  });
+
+  return {
+    ok: true,
     totalSize: rows.length,
     metric,
     seasonId: String(seasonId || ''),
