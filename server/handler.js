@@ -29,7 +29,7 @@ export function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Internal-Cron-Token',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
   });
   response.end(JSON.stringify(payload));
@@ -84,6 +84,18 @@ function normalizeTrackerPath(pathname = '') {
     return '/tracker-api';
   }
   return pathname;
+}
+
+function readAuthBearerToken(request) {
+  const header = request.headers?.authorization || '';
+  const match = String(header).match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+function readInternalCronToken(request) {
+  const headerToken = request.headers?.['x-internal-cron-token'];
+  const bearerToken = readAuthBearerToken(request);
+  return String(headerToken || bearerToken || '').trim();
 }
 
 async function fetchUpstreamSeasons({ pageSize = 50, pageToken = '', language = 'LANGUAGE_EN' } = {}) {
@@ -150,6 +162,18 @@ export async function handleTrackerRequest(request, response) {
     }
 
     if (request.method === 'POST' && pathname === '/tracker-api/leaderboard/refresh') {
+      const requiredToken = process.env.INTERNAL_CRON_TOKEN || '';
+      if (requiredToken) {
+        const requestToken = readInternalCronToken(request);
+        if (!requestToken || requestToken !== requiredToken) {
+          sendJson(response, 401, {
+            ok: false,
+            error: 'Unauthorized',
+          });
+          return;
+        }
+      }
+
       const body = await readJsonBody(request);
       const payload = await refreshLeaderboardBaseline({
         metric: body.metric || url.searchParams.get('metric') || 'rankedPoints',
