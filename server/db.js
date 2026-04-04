@@ -1707,7 +1707,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
   }
 
   const items = rows
-    .map((row) => {
+    .map((row, index) => {
       const stats = storageMode === 'postgres'
         ? (row.stats_json || {})
         : parseJsonSafely(row.stats_json, {});
@@ -1727,23 +1727,16 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
         statsUpdatedAt: row.stats_updated_at,
         fetchedAt: row.fetched_at,
         stats,
+        rank: index + 1,
       };
     });
 
-  const annotated = await annotateLeaderboardRankChanges(items, {
-    metric,
-    seasonId,
-    ranked,
-    persistSnapshot: false,
-  });
-
   return {
-    items: annotated.items,
+    items,
     totalSize: items.length,
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),
-    baseline: annotated.baseline,
   };
 }
 
@@ -1803,7 +1796,7 @@ export async function refreshLeaderboardBaseline({
   }
 
   const items = rows
-    .map((row) => {
+    .map((row, index) => {
       const stats = storageMode === 'postgres'
         ? (row.stats_json || {})
         : parseJsonSafely(row.stats_json, {});
@@ -1823,15 +1816,9 @@ export async function refreshLeaderboardBaseline({
         statsUpdatedAt: row.stats_updated_at,
         fetchedAt: row.fetched_at,
         stats,
+        rank: index + 1,
       };
     });
-
-  const annotated = await annotateLeaderboardRankChanges(items, {
-    metric,
-    seasonId,
-    ranked,
-    persistSnapshot: true,
-  });
 
   return {
     ok: true,
@@ -1839,7 +1826,7 @@ export async function refreshLeaderboardBaseline({
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),
-    baseline: annotated.baseline,
+    items,
   };
 }
 

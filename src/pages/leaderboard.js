@@ -1,6 +1,6 @@
 import { CLIENT_PREFERENCE_KEYS, setClientPreference } from '../api/preferences-store.js';
-import { fetchTrackedLeaderboard, fetchTrackedSeasons } from '../api/tracker-store.js';
-import { getCurrentLanguage, t } from '../i18n.js';
+import { fetchTrackedLeaderboard } from '../api/tracker-store.js';
+import { t } from '../i18n.js';
 
 const DEFAULT_METRIC = 'rankedPoints';
 const LEADERBOARD_LIMIT = 100;
@@ -53,32 +53,6 @@ export async function renderLeaderboardPage(container) {
             </button>
             <div class="stats-dropdown-menu hidden" id="leaderboard-metric-menu" role="menu" aria-labelledby="leaderboard-metric-trigger"></div>
           </div>
-
-          <div class="stats-dropdown stats-filter-group stats-filter-group-sm" id="leaderboard-mode-dropdown">
-            <input type="hidden" id="leaderboard-mode" value="false" />
-            <button type="button" class="stats-dropdown-trigger" id="leaderboard-mode-trigger" aria-haspopup="true" aria-expanded="false">
-              <span id="leaderboard-mode-text"></span>
-              <span class="stats-dropdown-chevron" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                </svg>
-              </span>
-            </button>
-            <div class="stats-dropdown-menu hidden" id="leaderboard-mode-menu" role="menu" aria-labelledby="leaderboard-mode-trigger"></div>
-          </div>
-
-          <div class="stats-dropdown stats-filter-group stats-filter-group-lg" id="leaderboard-season-dropdown">
-            <input type="hidden" id="leaderboard-season" value="" />
-            <button type="button" class="stats-dropdown-trigger" id="leaderboard-season-trigger" aria-haspopup="true" aria-expanded="false">
-              <span id="leaderboard-season-text"></span>
-              <span class="stats-dropdown-chevron" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                </svg>
-              </span>
-            </button>
-            <div class="stats-dropdown-menu hidden" id="leaderboard-season-menu" role="menu" aria-labelledby="leaderboard-season-trigger"></div>
-          </div>
         </div>
       </div>
       <div id="leaderboard-resource-status" style="margin-top: var(--space-md);">
@@ -92,29 +66,15 @@ export async function renderLeaderboardPage(container) {
   `;
 
   const metricInput = container.querySelector('#leaderboard-metric');
-  const modeInput = container.querySelector('#leaderboard-mode');
-  const seasonInput = container.querySelector('#leaderboard-season');
   const metricTrigger = container.querySelector('#leaderboard-metric-trigger');
-  const modeTrigger = container.querySelector('#leaderboard-mode-trigger');
-  const seasonTrigger = container.querySelector('#leaderboard-season-trigger');
   const metricMenu = container.querySelector('#leaderboard-metric-menu');
-  const modeMenu = container.querySelector('#leaderboard-mode-menu');
-  const seasonMenu = container.querySelector('#leaderboard-season-menu');
   const metricText = container.querySelector('#leaderboard-metric-text');
-  const modeText = container.querySelector('#leaderboard-mode-text');
-  const seasonText = container.querySelector('#leaderboard-season-text');
   const resourceStatus = container.querySelector('#leaderboard-resource-status');
   const listEl = container.querySelector('#leaderboard-list');
   const searchInput = container.querySelector('#leaderboard-search');
   const lastSyncEl = container.querySelector('#leaderboard-last-sync');
-  let seasons = [];
   let latestLoadId = 0;
   let latestLeaderboardItems = [];
-
-  const modeOptions = [
-    { value: 'false', label: t('leaderboard.mode.all') },
-    { value: 'true', label: t('leaderboard.mode.ranked') },
-  ];
 
   const metricOptions = METRIC_KEYS.map((key) => ({
     value: key,
@@ -122,17 +82,11 @@ export async function renderLeaderboardPage(container) {
   }));
 
   function closeDropdowns() {
-    [
-      ['leaderboard-metric-dropdown', metricTrigger, metricMenu],
-      ['leaderboard-mode-dropdown', modeTrigger, modeMenu],
-      ['leaderboard-season-dropdown', seasonTrigger, seasonMenu],
-    ].forEach(([id, trigger, menu]) => {
-      const dropdown = container.querySelector(`#${id}`);
-      if (!dropdown || !trigger || !menu) return;
-      dropdown.classList.remove('open');
-      menu.classList.add('hidden');
-      trigger.setAttribute('aria-expanded', 'false');
-    });
+    const dropdown = container.querySelector('#leaderboard-metric-dropdown');
+    if (!dropdown || !metricTrigger || !metricMenu) return;
+    dropdown.classList.remove('open');
+    metricMenu.classList.add('hidden');
+    metricTrigger.setAttribute('aria-expanded', 'false');
   }
 
   function toggleDropdown(dropdownId, trigger, menu) {
@@ -153,42 +107,6 @@ export async function renderLeaderboardPage(container) {
         type="button"
         class="stats-dropdown-option${option.value === metricInput.value ? ' active' : ''}"
         data-leaderboard-option="metric"
-        data-value="${option.value}"
-        role="menuitem"
-      >
-        <span class="stats-dropdown-option-label">${option.label}</span>
-      </button>
-    `).join('');
-  }
-
-  function renderModeOptions() {
-    const selected = modeOptions.find((option) => option.value === modeInput.value) || modeOptions[0];
-    modeText.textContent = selected.label;
-    modeMenu.innerHTML = modeOptions.map((option) => `
-      <button
-        type="button"
-        class="stats-dropdown-option${option.value === modeInput.value ? ' active' : ''}"
-        data-leaderboard-option="mode"
-        data-value="${option.value}"
-        role="menuitem"
-      >
-        <span class="stats-dropdown-option-label">${option.label}</span>
-      </button>
-    `).join('');
-  }
-
-  function renderSeasonOptions() {
-    const options = [{ value: '', label: t('leaderboard.seasonAll') }, ...seasons.map((season) => ({
-      value: season.id,
-      label: `S${season.number}: ${season.name}`,
-    }))];
-    const selected = options.find((option) => option.value === seasonInput.value) || options[0];
-    seasonText.textContent = selected.label;
-    seasonMenu.innerHTML = options.map((option) => `
-      <button
-        type="button"
-        class="stats-dropdown-option${option.value === seasonInput.value ? ' active' : ''}"
-        data-leaderboard-option="season"
         data-value="${option.value}"
         role="menuitem"
       >
@@ -223,7 +141,6 @@ export async function renderLeaderboardPage(container) {
               <th>${t('leaderboard.table.player')}</th>
               <th>${t('leaderboard.table.level')}</th>
               <th>${t(`leaderboard.metrics.${metricInput.value}`)}</th>
-              <th>${t('leaderboard.table.change')}</th>
             </tr>
           </thead>
           <tbody>
@@ -275,8 +192,6 @@ export async function renderLeaderboardPage(container) {
     try {
       const data = await fetchTrackedLeaderboard({
         metric: metricInput.value,
-        seasonId: seasonInput.value,
-        ranked: modeInput.value === 'true',
         limit: LEADERBOARD_LIMIT,
       });
 
@@ -308,8 +223,6 @@ export async function renderLeaderboardPage(container) {
   }
 
   metricTrigger.addEventListener('click', () => toggleDropdown('leaderboard-metric-dropdown', metricTrigger, metricMenu));
-  modeTrigger.addEventListener('click', () => toggleDropdown('leaderboard-mode-dropdown', modeTrigger, modeMenu));
-  seasonTrigger.addEventListener('click', () => toggleDropdown('leaderboard-season-dropdown', seasonTrigger, seasonMenu));
 
   container.addEventListener('click', (event) => {
     const option = event.target.closest('[data-leaderboard-option]');
@@ -323,12 +236,8 @@ export async function renderLeaderboardPage(container) {
     const kind = option.dataset.leaderboardOption;
     const value = option.dataset.value || '';
     if (kind === 'metric') metricInput.value = value;
-    if (kind === 'mode') modeInput.value = value;
-    if (kind === 'season') seasonInput.value = value;
 
     renderMetricOptions();
-    renderModeOptions();
-    renderSeasonOptions();
     closeDropdowns();
     loadLeaderboard();
   });
@@ -338,21 +247,7 @@ export async function renderLeaderboardPage(container) {
   });
 
   renderMetricOptions();
-  renderModeOptions();
-
-  try {
-    const seasonData = await fetchTrackedSeasons({ pageSize: 50 });
-    seasons = (seasonData?.seasons || []).sort((left, right) => Number(right.number || 0) - Number(left.number || 0));
-  } catch (error) {
-    seasons = [];
-  }
-
   if (requestId !== leaderboardViewRequestId) return;
-  if (!seasonInput.value) {
-    const activeSeason = seasons.find((season) => season.active) || seasons[0];
-    seasonInput.value = activeSeason?.id || '';
-  }
-  renderSeasonOptions();
   await loadLeaderboard();
 }
 
@@ -360,7 +255,6 @@ function renderLeaderboardTableRow(entry, index, metricKey) {
   const player = entry.player || {};
   const metricValue = formatMetricValue(metricKey, entry.metricValue, entry.stats || {});
   const playerQuery = player.deltaForceId || player.id || '';
-  const rankChangeBadge = renderRankChangeBadge(entry.rankChange);
   const rankValue = index + 1;
 
   return `
@@ -372,44 +266,7 @@ function renderLeaderboardTableRow(entry, index, metricKey) {
       </td>
       <td>Lv.${player.levelOperations ?? '?'}</td>
       <td class="text-mono">${metricValue}</td>
-      <td>${rankChangeBadge}</td>
     </tr>
-  `;
-}
-
-function renderRankChangeBadge(rankChange = {}) {
-  if (rankChange.state === 'up') {
-    return `
-      <span class="leaderboard-delta leaderboard-delta--up">
-        <i data-lucide="trending-up" style="width: 12px; height: 12px;"></i>${t('leaderboard.rank.up', { value: rankChange.delta })}
-      </span>
-    `;
-  }
-
-  if (rankChange.state === 'down') {
-    return `
-      <span class="leaderboard-delta leaderboard-delta--down">
-        <i data-lucide="trending-down" style="width: 12px; height: 12px;"></i>${t('leaderboard.rank.down', { value: rankChange.delta })}
-      </span>
-    `;
-  }
-
-  if (rankChange.state === 'new') {
-    return `
-      <span class="leaderboard-delta leaderboard-delta--new">
-        <i data-lucide="flame" style="width: 12px; height: 12px;"></i>${t('leaderboard.rank.new')}
-      </span>
-    `;
-  }
-
-  return `
-    <span
-      class="leaderboard-delta leaderboard-delta--same"
-      title="${t('leaderboard.rank.sameTitle')}"
-      aria-label="${t('leaderboard.rank.sameTitle')}"
-    >
-      <i data-lucide="minus" style="width: 12px; height: 12px;"></i>-
-    </span>
   `;
 }
 

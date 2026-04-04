@@ -1373,14 +1373,15 @@ html {
 
 .leaderboard-filters {
   display: grid;
-  grid-template-columns: 1.4fr 0.8fr 1fr;
+  grid-template-columns: minmax(220px, 280px);
   gap: var(--space-sm);
+  justify-content: end;
 }
 
 .leaderboard-controls {
   display: grid;
-  grid-template-columns: 1fr 2fr;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
   gap: var(--space-sm);
 }
 
@@ -1399,6 +1400,7 @@ html {
 
 .leaderboard-search-bar {
   margin: 0;
+  min-width: 0;
 }
 
 .leaderboard-search-bar .search-icon {
