@@ -88,6 +88,14 @@ export function parseBooleanParam(value, defaultValue = false) {
   return value === 'true' || value === '1' || value === true;
 }
 
+function parseOptionalBooleanParam(value) {
+  if (typeof value === 'undefined' || value === null || value === '') {
+    return null;
+  }
+
+  return parseBooleanParam(value);
+}
+
 function normalizeTrackerPath(pathname = '') {
   if (pathname.startsWith('/api/tracker-api/')) {
     return pathname.replace(/^\/api/, '');
@@ -591,8 +599,8 @@ export async function handleTrackerRequest(request, response) {
     if (request.method === 'GET' && pathname === '/tracker-api/leaderboard') {
       const payload = await getLeaderboard({
         metric: url.searchParams.get('metric') || 'rankedPoints',
-        seasonId: url.searchParams.get('seasonId') || '',
-        ranked: parseBooleanParam(url.searchParams.get('ranked')),
+        seasonId: url.searchParams.get('seasonId') || null,
+        ranked: parseOptionalBooleanParam(url.searchParams.get('ranked')),
         limit: Number(url.searchParams.get('limit') || 50),
       });
       sendJson(response, 200, payload, getPublicCacheHeaders('leaderboard'));
@@ -615,8 +623,8 @@ export async function handleTrackerRequest(request, response) {
       const body = await readJsonBody(request);
       const payload = await refreshLeaderboardBaseline({
         metric: body.metric || url.searchParams.get('metric') || 'rankedPoints',
-        seasonId: body.seasonId || url.searchParams.get('seasonId') || '',
-        ranked: parseBooleanParam(
+        seasonId: body.seasonId || url.searchParams.get('seasonId') || null,
+        ranked: parseOptionalBooleanParam(
           typeof body.ranked === 'undefined' ? url.searchParams.get('ranked') : body.ranked,
         ),
         limit: Number(body.limit || url.searchParams.get('limit') || 200),

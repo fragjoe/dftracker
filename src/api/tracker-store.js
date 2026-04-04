@@ -100,7 +100,7 @@ export function persistTrackedPlayerWealthHistory({ player, history }) {
     .catch(() => null);
 }
 
-export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
+export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = null, limit = 50 } = {}) {
   if (!canUseTrackerNetwork()) {
     return {
       items: [],
@@ -115,10 +115,10 @@ export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonI
 
   const params = new URLSearchParams({
     metric,
-    seasonId,
-    ranked: ranked ? 'true' : 'false',
     limit: String(limit),
   });
+  if (seasonId) params.set('seasonId', seasonId);
+  if (typeof ranked === 'boolean') params.set('ranked', ranked ? 'true' : 'false');
 
   try {
     const response = await fetch(getTrackerUrl(`/leaderboard?${params.toString()}`));

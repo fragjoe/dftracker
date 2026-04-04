@@ -189,6 +189,47 @@ function parseJsonSafely(value, fallback) {
   }
 }
 
+function selectLeaderboardItemsFromRows(rows, metric, limit) {
+  const safeMetric = String(metric || 'rankedPoints');
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
+  const bestRowsByPlayer = new Map();
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const stats = storageMode === 'postgres'
+      ? (row.stats_json || {})
+      : parseJsonSafely(row.stats_json, {});
+    const playerId = String(row.id || '');
+    if (!playerId || bestRowsByPlayer.has(playerId)) {
+      continue;
+    }
+
+    bestRowsByPlayer.set(playerId, {
+      row,
+      stats,
+    });
+  }
+
+  return Array.from(bestRowsByPlayer.values())
+    .slice(0, safeLimit)
+    .map(({ row, stats }, index) => ({
+      player: {
+        id: row.id,
+        deltaForceId: row.delta_force_id,
+        name: row.name,
+        levelOperations: row.level_operations,
+        registeredAt: row.registered_at,
+      },
+      metric: safeMetric,
+      metricValue: Number(stats?.[safeMetric] || 0),
+      seasonId: row.season_id,
+      ranked: Boolean(row.ranked),
+      statsUpdatedAt: row.stats_updated_at,
+      fetchedAt: row.fetched_at,
+      stats,
+      rank: index + 1,
+    }));
+}
+
 function ensureSqliteReady() {
   if (sqliteDb) {
     return;
@@ -1656,11 +1697,13 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
   };
 }
 
-export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
+export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null, ranked = null, limit = 50 } = {}) {
   await ensureReady();
   let rows;
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const hasSeasonFilter = typeof seasonId === 'string' && seasonId !== '';
+  const hasRankedFilter = typeof ranked === 'boolean';
 
   if (storageMode === 'postgres') {
     rows = await postgresClient`
@@ -1678,10 +1721,9 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
       FROM player_stats_snapshots s
       INNER JOIN players p
         ON p.id = s.player_id
-      WHERE s.season_id = ${String(seasonId || '')}
-        AND s.ranked = ${Boolean(ranked)}
-      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, p.last_seen_at DESC
-      LIMIT ${safeLimit}
+      WHERE (${hasSeasonFilter} = FALSE OR s.season_id = ${String(seasonId || '')})
+        AND (${hasRankedFilter} = FALSE OR s.ranked = ${Boolean(ranked)})
+      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
     `;
   } else {
     rows = sqliteDb.prepare(`
@@ -1699,57 +1741,41 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
       FROM player_stats_snapshots s
       INNER JOIN players p
         ON p.id = s.player_id
-      WHERE s.season_id = ?
-        AND s.ranked = ?
-      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, p.last_seen_at DESC
-      LIMIT ?
-    `).all(String(seasonId || ''), ranked ? 1 : 0, `$.${safeMetric}`, safeLimit);
+      WHERE (? = 0 OR s.season_id = ?)
+        AND (? = 0 OR s.ranked = ?)
+      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+    `).all(
+      hasSeasonFilter ? 1 : 0,
+      String(seasonId || ''),
+      hasRankedFilter ? 1 : 0,
+      ranked ? 1 : 0,
+      `$.${safeMetric}`,
+    );
   }
 
-  const items = rows
-    .map((row, index) => {
-      const stats = storageMode === 'postgres'
-        ? (row.stats_json || {})
-        : parseJsonSafely(row.stats_json, {});
-
-      return {
-        player: {
-          id: row.id,
-          deltaForceId: row.delta_force_id,
-          name: row.name,
-          levelOperations: row.level_operations,
-          registeredAt: row.registered_at,
-        },
-        metric,
-        metricValue: Number(stats?.[metric] || 0),
-        seasonId: row.season_id,
-        ranked: Boolean(row.ranked),
-        statsUpdatedAt: row.stats_updated_at,
-        fetchedAt: row.fetched_at,
-        stats,
-        rank: index + 1,
-      };
-    });
+  const items = selectLeaderboardItemsFromRows(rows, metric, safeLimit);
 
   return {
     items,
     totalSize: items.length,
     metric,
-    seasonId: String(seasonId || ''),
-    ranked: Boolean(ranked),
+    seasonId: hasSeasonFilter ? String(seasonId || '') : null,
+    ranked: hasRankedFilter ? Boolean(ranked) : null,
   };
 }
 
 export async function refreshLeaderboardBaseline({
   metric = 'rankedPoints',
-  seasonId = '',
-  ranked = false,
+  seasonId = null,
+  ranked = null,
   limit = 200,
 } = {}) {
   await ensureReady();
   let rows;
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
+  const hasSeasonFilter = typeof seasonId === 'string' && seasonId !== '';
+  const hasRankedFilter = typeof ranked === 'boolean';
 
   if (storageMode === 'postgres') {
     rows = await postgresClient`
@@ -1767,10 +1793,9 @@ export async function refreshLeaderboardBaseline({
       FROM player_stats_snapshots s
       INNER JOIN players p
         ON p.id = s.player_id
-      WHERE s.season_id = ${String(seasonId || '')}
-        AND s.ranked = ${Boolean(ranked)}
-      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, p.last_seen_at DESC
-      LIMIT ${safeLimit}
+      WHERE (${hasSeasonFilter} = FALSE OR s.season_id = ${String(seasonId || '')})
+        AND (${hasRankedFilter} = FALSE OR s.ranked = ${Boolean(ranked)})
+      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
     `;
   } else {
     rows = sqliteDb.prepare(`
@@ -1788,44 +1813,26 @@ export async function refreshLeaderboardBaseline({
       FROM player_stats_snapshots s
       INNER JOIN players p
         ON p.id = s.player_id
-      WHERE s.season_id = ?
-        AND s.ranked = ?
-      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, p.last_seen_at DESC
-      LIMIT ?
-    `).all(String(seasonId || ''), ranked ? 1 : 0, `$.${safeMetric}`, safeLimit);
+      WHERE (? = 0 OR s.season_id = ?)
+        AND (? = 0 OR s.ranked = ?)
+      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+    `).all(
+      hasSeasonFilter ? 1 : 0,
+      String(seasonId || ''),
+      hasRankedFilter ? 1 : 0,
+      ranked ? 1 : 0,
+      `$.${safeMetric}`,
+    );
   }
 
-  const items = rows
-    .map((row, index) => {
-      const stats = storageMode === 'postgres'
-        ? (row.stats_json || {})
-        : parseJsonSafely(row.stats_json, {});
-
-      return {
-        player: {
-          id: row.id,
-          deltaForceId: row.delta_force_id,
-          name: row.name,
-          levelOperations: row.level_operations,
-          registeredAt: row.registered_at,
-        },
-        metric,
-        metricValue: Number(stats?.[metric] || 0),
-        seasonId: row.season_id,
-        ranked: Boolean(row.ranked),
-        statsUpdatedAt: row.stats_updated_at,
-        fetchedAt: row.fetched_at,
-        stats,
-        rank: index + 1,
-      };
-    });
+  const items = selectLeaderboardItemsFromRows(rows, metric, safeLimit);
 
   return {
     ok: true,
     totalSize: items.length,
     metric,
-    seasonId: String(seasonId || ''),
-    ranked: Boolean(ranked),
+    seasonId: hasSeasonFilter ? String(seasonId || '') : null,
+    ranked: hasRankedFilter ? Boolean(ranked) : null,
     items,
   };
 }
