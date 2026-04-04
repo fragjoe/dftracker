@@ -7,6 +7,7 @@ const DEFAULT_DB_PATH = resolve(process.cwd(), '.data/dftracker.sqlite');
 const dbPath = process.env.DFTRACKER_DB_PATH || DEFAULT_DB_PATH;
 const postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 const storageMode = postgresUrl ? 'postgres' : 'sqlite';
+const POSTGRES_POOL_MAX = Math.max(1, Math.min(Number(process.env.POSTGRES_POOL_MAX || 4), 10));
 const SEASON_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MARKET_CATALOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MARKET_ITEM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -18,6 +19,111 @@ const PLAYER_WEALTH_HISTORY_TTL_MS = 3 * 60 * 60 * 1000;
 let sqliteDb = null;
 let postgresClient = null;
 let readyPromise = null;
+
+const POSTGRES_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS players (
+    id TEXT PRIMARY KEY,
+    delta_force_id TEXT UNIQUE,
+    name TEXT NOT NULL,
+    level_operations INTEGER,
+    registered_at TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS player_stats_snapshots (
+    player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    season_id TEXT NOT NULL DEFAULT '',
+    ranked BOOLEAN NOT NULL DEFAULT FALSE,
+    stats_json JSONB NOT NULL,
+    stats_updated_at TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (player_id, season_id, ranked)
+  );
+
+  CREATE TABLE IF NOT EXISTS player_wealth_snapshots (
+    player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
+    stash_json JSONB NOT NULL,
+    stash_updated_at TEXT,
+    fetched_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS player_wealth_history_snapshots (
+    player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
+    history_json JSONB NOT NULL,
+    latest_entry_at TEXT,
+    points_count INTEGER NOT NULL DEFAULT 0,
+    fetched_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_players_delta_force_id
+    ON players(delta_force_id);
+
+  CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
+    ON player_stats_snapshots(season_id, ranked);
+
+  CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
+    filter_key TEXT NOT NULL,
+    week_key TEXT NOT NULL,
+    ranks_json JSONB NOT NULL,
+    saved_at TEXT NOT NULL,
+    PRIMARY KEY (filter_key, week_key)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
+    ON leaderboard_rank_snapshots(filter_key);
+
+  CREATE TABLE IF NOT EXISTS seasons_cache (
+    id TEXT PRIMARY KEY,
+    number INTEGER,
+    name TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT FALSE,
+    raw_json JSONB NOT NULL,
+    fetched_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
+    ON seasons_cache(active, number);
+
+  CREATE TABLE IF NOT EXISTS market_item_cache (
+    item_id TEXT NOT NULL,
+    language TEXT NOT NULL,
+    item_json JSONB NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (item_id, language)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_item
+    ON market_item_cache(language, item_id);
+
+  CREATE TABLE IF NOT EXISTS market_item_summary_cache (
+    item_id TEXT NOT NULL,
+    language TEXT NOT NULL,
+    summary_json JSONB NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (item_id, language)
+  );
+
+  CREATE TABLE IF NOT EXISTS market_item_series_cache (
+    item_id TEXT NOT NULL,
+    language TEXT NOT NULL,
+    days INTEGER NOT NULL,
+    series_json JSONB NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (item_id, language, days)
+  );
+
+  CREATE TABLE IF NOT EXISTS client_preferences (
+    client_id TEXT NOT NULL,
+    preference_key TEXT NOT NULL,
+    preference_json JSONB NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (client_id, preference_key)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_client_preferences_client_updated
+    ON client_preferences(client_id, updated_at DESC);
+`;
 
 function getNowIso() {
   return new Date().toISOString();
@@ -171,17 +277,6 @@ function ensureSqliteReady() {
     CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
       ON seasons_cache(active, number);
 
-    CREATE TABLE IF NOT EXISTS market_catalog_cache (
-      cache_key TEXT PRIMARY KEY,
-      filter TEXT NOT NULL,
-      page_token TEXT NOT NULL,
-      page_size INTEGER NOT NULL,
-      language TEXT NOT NULL,
-      items_json TEXT NOT NULL,
-      next_page_token TEXT,
-      fetched_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS market_item_cache (
       item_id TEXT NOT NULL,
       language TEXT NOT NULL,
@@ -189,6 +284,9 @@ function ensureSqliteReady() {
       fetched_at TEXT NOT NULL,
       PRIMARY KEY (item_id, language)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_item
+      ON market_item_cache(language, item_id);
 
     CREATE TABLE IF NOT EXISTS market_item_summary_cache (
       item_id TEXT NOT NULL,
@@ -206,6 +304,17 @@ function ensureSqliteReady() {
       fetched_at TEXT NOT NULL,
       PRIMARY KEY (item_id, language, days)
     );
+
+    CREATE TABLE IF NOT EXISTS client_preferences (
+      client_id TEXT NOT NULL,
+      preference_key TEXT NOT NULL,
+      preference_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (client_id, preference_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_client_preferences_client_updated
+      ON client_preferences(client_id, updated_at DESC);
   `);
 }
 
@@ -216,136 +325,9 @@ async function ensurePostgresReady() {
 
   postgresClient = postgres(postgresUrl, {
     prepare: false,
-    max: 1,
+    max: POSTGRES_POOL_MAX,
   });
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS players (
-      id TEXT PRIMARY KEY,
-      delta_force_id TEXT UNIQUE,
-      name TEXT NOT NULL,
-      level_operations INTEGER,
-      registered_at TEXT,
-      first_seen_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
-    )
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS player_stats_snapshots (
-      player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
-      season_id TEXT NOT NULL DEFAULT '',
-      ranked BOOLEAN NOT NULL DEFAULT FALSE,
-      stats_json JSONB NOT NULL,
-      stats_updated_at TEXT,
-      fetched_at TEXT NOT NULL,
-      PRIMARY KEY (player_id, season_id, ranked)
-    )
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS player_wealth_snapshots (
-      player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
-      stash_json JSONB NOT NULL,
-      stash_updated_at TEXT,
-      fetched_at TEXT NOT NULL
-    )
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS player_wealth_history_snapshots (
-      player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
-      history_json JSONB NOT NULL,
-      latest_entry_at TEXT,
-      points_count INTEGER NOT NULL DEFAULT 0,
-      fetched_at TEXT NOT NULL
-    )
-  `;
-
-  await postgresClient`
-    CREATE INDEX IF NOT EXISTS idx_players_delta_force_id
-      ON players(delta_force_id)
-  `;
-
-  await postgresClient`
-    CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
-      ON player_stats_snapshots(season_id, ranked)
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
-      filter_key TEXT NOT NULL,
-      week_key TEXT NOT NULL,
-      ranks_json JSONB NOT NULL,
-      saved_at TEXT NOT NULL,
-      PRIMARY KEY (filter_key, week_key)
-    )
-  `;
-
-  await postgresClient`
-    CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
-      ON leaderboard_rank_snapshots(filter_key)
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS seasons_cache (
-      id TEXT PRIMARY KEY,
-      number INTEGER,
-      name TEXT NOT NULL,
-      active BOOLEAN NOT NULL DEFAULT FALSE,
-      raw_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL
-    )
-  `;
-
-  await postgresClient`
-    CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
-      ON seasons_cache(active, number)
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS market_catalog_cache (
-      cache_key TEXT PRIMARY KEY,
-      filter TEXT NOT NULL,
-      page_token TEXT NOT NULL,
-      page_size INTEGER NOT NULL,
-      language TEXT NOT NULL,
-      items_json JSONB NOT NULL,
-      next_page_token TEXT,
-      fetched_at TEXT NOT NULL
-    )
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS market_item_cache (
-      item_id TEXT NOT NULL,
-      language TEXT NOT NULL,
-      item_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL,
-      PRIMARY KEY (item_id, language)
-    )
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS market_item_summary_cache (
-      item_id TEXT NOT NULL,
-      language TEXT NOT NULL,
-      summary_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL,
-      PRIMARY KEY (item_id, language)
-    )
-  `;
-
-  await postgresClient`
-    CREATE TABLE IF NOT EXISTS market_item_series_cache (
-      item_id TEXT NOT NULL,
-      language TEXT NOT NULL,
-      days INTEGER NOT NULL,
-      series_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL,
-      PRIMARY KEY (item_id, language, days)
-    )
-  `;
+  await postgresClient.unsafe(POSTGRES_SCHEMA_SQL);
 }
 
 async function ensureReady() {
@@ -1327,6 +1309,154 @@ export async function getCachedMarketSeriesSummary(itemId, language = '', days =
   };
 }
 
+export async function getClientPreferences(clientId = '', keys = []) {
+  await ensureReady();
+
+  const normalizedClientId = String(clientId || '').trim();
+  if (!normalizedClientId) {
+    return [];
+  }
+
+  const normalizedKeys = Array.isArray(keys)
+    ? keys.map((key) => String(key || '').trim()).filter(Boolean)
+    : [];
+
+  if (storageMode === 'postgres') {
+    const rows = normalizedKeys.length
+      ? await postgresClient`
+          SELECT preference_key, preference_json, updated_at
+          FROM client_preferences
+          WHERE client_id = ${normalizedClientId}
+            AND preference_key = ANY(${normalizedKeys})
+          ORDER BY updated_at DESC
+        `
+      : await postgresClient`
+          SELECT preference_key, preference_json, updated_at
+          FROM client_preferences
+          WHERE client_id = ${normalizedClientId}
+          ORDER BY updated_at DESC
+        `;
+
+    return rows.map((row) => ({
+      key: row.preference_key,
+      value: row.preference_json,
+      updatedAt: row.updated_at || '',
+    }));
+  }
+
+  if (normalizedKeys.length) {
+    const placeholders = normalizedKeys.map(() => '?').join(', ');
+    const rows = sqliteDb.prepare(`
+      SELECT preference_key, preference_json, updated_at
+      FROM client_preferences
+      WHERE client_id = ?
+        AND preference_key IN (${placeholders})
+      ORDER BY updated_at DESC
+    `).all(normalizedClientId, ...normalizedKeys);
+
+    return rows.map((row) => ({
+      key: row.preference_key,
+      value: parseJsonSafely(row.preference_json, null),
+      updatedAt: row.updated_at || '',
+    }));
+  }
+
+  const rows = sqliteDb.prepare(`
+    SELECT preference_key, preference_json, updated_at
+    FROM client_preferences
+    WHERE client_id = ?
+    ORDER BY updated_at DESC
+  `).all(normalizedClientId);
+
+  return rows.map((row) => ({
+    key: row.preference_key,
+    value: parseJsonSafely(row.preference_json, null),
+    updatedAt: row.updated_at || '',
+  }));
+}
+
+export async function writeClientPreference(clientId = '', key = '', value = null, updatedAt = getNowIso()) {
+  await ensureReady();
+
+  const normalizedClientId = String(clientId || '').trim();
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedClientId || !normalizedKey) {
+    throw new Error('Client preference requires clientId and key');
+  }
+
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      INSERT INTO client_preferences (
+        client_id,
+        preference_key,
+        preference_json,
+        updated_at
+      ) VALUES (
+        ${normalizedClientId},
+        ${normalizedKey},
+        ${postgresClient.json(value)},
+        ${updatedAt}
+      )
+      ON CONFLICT (client_id, preference_key)
+      DO UPDATE SET
+        preference_json = EXCLUDED.preference_json,
+        updated_at = EXCLUDED.updated_at
+    `;
+  } else {
+    sqliteDb.prepare(`
+      INSERT INTO client_preferences (
+        client_id,
+        preference_key,
+        preference_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(client_id, preference_key) DO UPDATE SET
+        preference_json = excluded.preference_json,
+        updated_at = excluded.updated_at
+    `).run(
+      normalizedClientId,
+      normalizedKey,
+      JSON.stringify(value),
+      updatedAt,
+    );
+  }
+
+  return {
+    key: normalizedKey,
+    value,
+    updatedAt,
+  };
+}
+
+export async function deleteClientPreference(clientId = '', key = '') {
+  await ensureReady();
+
+  const normalizedClientId = String(clientId || '').trim();
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedClientId || !normalizedKey) {
+    throw new Error('Client preference requires clientId and key');
+  }
+
+  if (storageMode === 'postgres') {
+    await postgresClient`
+      DELETE FROM client_preferences
+      WHERE client_id = ${normalizedClientId}
+        AND preference_key = ${normalizedKey}
+    `;
+  } else {
+    sqliteDb.prepare(`
+      DELETE FROM client_preferences
+      WHERE client_id = ?
+        AND preference_key = ?
+    `).run(normalizedClientId, normalizedKey);
+  }
+
+  return {
+    key: normalizedKey,
+    deleted: true,
+  };
+}
+
 async function readAllMarketItems(language = '') {
   if (storageMode === 'postgres') {
     const rows = await postgresClient`
@@ -1367,22 +1497,32 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
         WHERE language = ${normalizedLanguage}
       `;
 
-      for (const item of normalizedItems) {
-        await tx`
-          INSERT INTO market_item_cache (
-            item_id,
-            language,
-            item_json,
-            fetched_at
-          )
-          VALUES (
-            ${String(item.id)},
-            ${normalizedLanguage},
-            ${tx.json(item || {})},
-            ${fetchedAt}
-          )
-        `;
+      if (!normalizedItems.length) {
+        return;
       }
+
+      const payload = normalizedItems.map((item) => ({
+        item_id: String(item.id),
+        language: normalizedLanguage,
+        item_json: item || {},
+        fetched_at: fetchedAt,
+      }));
+
+      await tx`
+        INSERT INTO market_item_cache (
+          item_id,
+          language,
+          item_json,
+          fetched_at
+        )
+        SELECT item_id, language, item_json, fetched_at
+        FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS rows(
+          item_id text,
+          language text,
+          item_json jsonb,
+          fetched_at text
+        )
+      `;
     });
     return;
   }
@@ -1394,24 +1534,26 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
       WHERE language = ?
     `).run(normalizedLanguage);
 
-    const statement = sqliteDb.prepare(`
-      INSERT INTO market_item_cache (
-        item_id,
-        language,
-        item_json,
-        fetched_at
-      )
-      VALUES (?, ?, ?, ?)
-    `);
+    if (normalizedItems.length) {
+      const statement = sqliteDb.prepare(`
+        INSERT INTO market_item_cache (
+          item_id,
+          language,
+          item_json,
+          fetched_at
+        )
+        VALUES (?, ?, ?, ?)
+      `);
 
-    normalizedItems.forEach((item) => {
-      statement.run(
-        String(item.id),
-        normalizedLanguage,
-        JSON.stringify(item || {}),
-        fetchedAt,
-      );
-    });
+      normalizedItems.forEach((item) => {
+        statement.run(
+          String(item.id),
+          normalizedLanguage,
+          JSON.stringify(item || {}),
+          fetchedAt,
+        );
+      });
+    }
 
     sqliteDb.exec('COMMIT');
   } catch (error) {
@@ -1422,10 +1564,68 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
 
 export async function getMarketCatalogSummary({ language = '', search = '', pageSize = 10, pageToken = '' } = {}) {
   await ensureReady();
-  const rows = await readAllMarketItems(language);
+  const normalizedLanguage = String(language || '');
+  const safePageSize = Math.max(1, Math.min(Number(pageSize) || 10, 50));
+  const offset = decodeMarketOffsetToken(pageToken);
+  const query = String(search || '').trim().toLowerCase();
+
+  if (storageMode === 'postgres') {
+    const searchPattern = `%${query}%`;
+    const rows = await postgresClient`
+      SELECT item_json, fetched_at
+      FROM market_item_cache
+      WHERE language = ${normalizedLanguage}
+        AND (
+          ${!query}
+          OR LOWER(CONCAT_WS(' ',
+            COALESCE(item_json ->> 'name', ''),
+            COALESCE(item_json ->> 'langEn', ''),
+            COALESCE(item_json ->> 'langZhHans', ''),
+            COALESCE(item_json ->> 'displayName', ''),
+            COALESCE(item_json ->> 'description', ''),
+            COALESCE(item_json ->> 'categoryName', ''),
+            COALESCE(item_json ->> 'category', ''),
+            COALESCE(item_json ->> 'type', ''),
+            COALESCE(item_json ->> 'id', '')
+          )) LIKE ${searchPattern}
+        )
+      ORDER BY LOWER(COALESCE(
+        item_json ->> 'name',
+        item_json ->> 'langEn',
+        item_json ->> 'displayName',
+        item_json ->> 'id',
+        ''
+      )) ASC
+      LIMIT ${safePageSize + 1}
+      OFFSET ${offset}
+    `;
+
+    const latestRow = await postgresClient`
+      SELECT fetched_at
+      FROM market_item_cache
+      WHERE language = ${normalizedLanguage}
+      ORDER BY fetched_at DESC
+      LIMIT 1
+    `;
+
+    const fetchedAt = latestRow[0]?.fetched_at || '';
+    const items = rows.slice(0, safePageSize).map((row) => row.item_json || {});
+    const nextPageToken = rows.length > safePageSize
+      ? encodeMarketOffsetToken(offset + safePageSize)
+      : '';
+
+    return {
+      items,
+      nextPageToken,
+      fetchedAt,
+      isFresh: isFreshTimestamp(fetchedAt, MARKET_CATALOG_TTL_MS),
+      totalSize: null,
+    };
+  }
+
+  const rows = await readAllMarketItems(normalizedLanguage);
   const fetchedAt = rows[0]?.fetchedAt || '';
   const isFresh = isFreshTimestamp(fetchedAt, MARKET_CATALOG_TTL_MS);
-  const query = String(search || '').trim().toLowerCase();
 
   const filtered = rows
     .map((row) => row.item)
@@ -1453,8 +1653,6 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
       return leftName.localeCompare(rightName);
     });
 
-  const safePageSize = Math.max(1, Math.min(Number(pageSize) || 10, 50));
-  const offset = decodeMarketOffsetToken(pageToken);
   const items = filtered.slice(offset, offset + safePageSize);
   const nextOffset = offset + safePageSize;
   const nextPageToken = nextOffset < filtered.length ? encodeMarketOffsetToken(nextOffset) : '';
@@ -1471,19 +1669,10 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
 export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = false, limit = 50 } = {}) {
   await ensureReady();
   let rows;
-  let totalSize;
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
 
   if (storageMode === 'postgres') {
-    const countRows = await postgresClient`
-      SELECT COUNT(*)::int AS total
-      FROM player_stats_snapshots
-      WHERE season_id = ${String(seasonId || '')}
-        AND ranked = ${Boolean(ranked)}
-    `;
-    totalSize = Number(countRows[0]?.total || 0);
-
     rows = await postgresClient`
       SELECT
         p.id,
@@ -1505,13 +1694,6 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
       LIMIT ${safeLimit}
     `;
   } else {
-    totalSize = Number(sqliteDb.prepare(`
-      SELECT COUNT(*) AS total
-      FROM player_stats_snapshots
-      WHERE season_id = ?
-        AND ranked = ?
-    `).get(String(seasonId || ''), ranked ? 1 : 0)?.total || 0);
-
     rows = sqliteDb.prepare(`
       SELECT
         p.id,
@@ -1567,7 +1749,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = '', r
 
   return {
     items: annotated.items,
-    totalSize,
+    totalSize: items.length,
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),
@@ -1583,19 +1765,10 @@ export async function refreshLeaderboardBaseline({
 } = {}) {
   await ensureReady();
   let rows;
-  let totalSize;
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
 
   if (storageMode === 'postgres') {
-    const countRows = await postgresClient`
-      SELECT COUNT(*)::int AS total
-      FROM player_stats_snapshots
-      WHERE season_id = ${String(seasonId || '')}
-        AND ranked = ${Boolean(ranked)}
-    `;
-    totalSize = Number(countRows[0]?.total || 0);
-
     rows = await postgresClient`
       SELECT
         p.id,
@@ -1617,13 +1790,6 @@ export async function refreshLeaderboardBaseline({
       LIMIT ${safeLimit}
     `;
   } else {
-    totalSize = Number(sqliteDb.prepare(`
-      SELECT COUNT(*) AS total
-      FROM player_stats_snapshots
-      WHERE season_id = ?
-        AND ranked = ?
-    `).get(String(seasonId || ''), ranked ? 1 : 0)?.total || 0);
-
     rows = sqliteDb.prepare(`
       SELECT
         p.id,
@@ -1679,7 +1845,7 @@ export async function refreshLeaderboardBaseline({
 
   return {
     ok: true,
-    totalSize,
+    totalSize: items.length,
     metric,
     seasonId: String(seasonId || ''),
     ranked: Boolean(ranked),

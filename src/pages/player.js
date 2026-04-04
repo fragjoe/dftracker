@@ -1,4 +1,11 @@
 import {
+  CLIENT_PREFERENCE_KEYS,
+  getClientPreference,
+  initializeClientPreferences,
+  removeClientPreference,
+  setClientPreference,
+} from '../api/preferences-store.js';
+import {
   fetchTrackedPlayer,
   fetchTrackedPlayerStats,
   fetchTrackedPlayerWealth,
@@ -23,7 +30,8 @@ const playerHistoryCache = new Map();
 const playerViewStateCache = new Map();
 
 const RECENT_SEARCHES_KEY = 'recent_searches_list';
-const ACTIVE_PLAYER_PROFILE_KEY = 'active_player_profile';
+const ACTIVE_PLAYER_PROFILE_KEY = CLIENT_PREFERENCE_KEYS.activePlayerProfile;
+const LAST_PLAYER_QUERY_KEY = CLIENT_PREFERENCE_KEYS.lastPlayerQuery;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NUMERIC_ID_PATTERN = /^\d{6,}$/;
 const AUTO_SEARCH_NUMERIC_ID_LENGTH = 20;
@@ -79,12 +87,8 @@ function createPlayerProfileSummary(player) {
 }
 
 function readStoredActivePlayerProfile() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(ACTIVE_PLAYER_PROFILE_KEY) || 'null');
-    return isValidResolvedPlayer(stored) ? stored : null;
-  } catch (error) {
-    return null;
-  }
+  const stored = getClientPreference(ACTIVE_PLAYER_PROFILE_KEY, null);
+  return isValidResolvedPlayer(stored) ? stored : null;
 }
 
 function persistActivePlayerProfile(player) {
@@ -92,9 +96,9 @@ function persistActivePlayerProfile(player) {
   activePlayerProfile = summary;
 
   if (summary) {
-    localStorage.setItem(ACTIVE_PLAYER_PROFILE_KEY, JSON.stringify(summary));
+    void setClientPreference(ACTIVE_PLAYER_PROFILE_KEY, summary);
   } else {
-    localStorage.removeItem(ACTIVE_PLAYER_PROFILE_KEY);
+    void removeClientPreference(ACTIVE_PLAYER_PROFILE_KEY);
   }
 
   emitActivePlayerChange();
@@ -117,8 +121,10 @@ export function getActivePlayerProfileSummary() {
 export function clearActivePlayerContext() {
   destroyPlayerCharts();
   activePlayerProfile = null;
-  localStorage.removeItem('lastPlayerQuery');
-  localStorage.removeItem(ACTIVE_PLAYER_PROFILE_KEY);
+  void Promise.all([
+    removeClientPreference(LAST_PLAYER_QUERY_KEY),
+    removeClientPreference(ACTIVE_PLAYER_PROFILE_KEY),
+  ]);
   emitActivePlayerChange();
   window.dispatchEvent(new Event('app:active-player-cleared'));
 }
@@ -445,6 +451,7 @@ function renderPlayerIdentityHeader(player) {
 }
 
 export async function renderPlayerPage(container) {
+  await initializeClientPreferences();
   destroyPlayerCharts();
   const activePlayer = getActivePlayerProfileSummary();
 
@@ -534,7 +541,7 @@ export async function renderPlayerPage(container) {
   };
 
   // Load persistence
-  const lastQuery = localStorage.getItem('lastPlayerQuery')
+  const lastQuery = getClientPreference(LAST_PLAYER_QUERY_KEY, '')
     || activePlayer?.deltaForceId
     || activePlayer?.id
     || '';
@@ -769,7 +776,7 @@ async function loadPlayerData(container, query, { hideSearchOnSuccess = false } 
     }
 
     // Save persistence on success
-    localStorage.setItem('lastPlayerQuery', query);
+    void setClientPreference(LAST_PLAYER_QUERY_KEY, query);
     addRecentSearch(player);
     persistActivePlayerProfile(player);
 
@@ -1694,6 +1701,7 @@ async function renderHistoricalStashSeries(historyWrapper, allSeries, controls =
 }
 
 export async function renderWealthPage(container) {
+  await initializeClientPreferences();
   destroyPlayerCharts();
 
   container.innerHTML = `
@@ -2058,7 +2066,7 @@ async function resolveActivePlayerForSharedPages() {
     return activePlayer;
   }
 
-  const lastQuery = localStorage.getItem('lastPlayerQuery');
+  const lastQuery = getClientPreference(LAST_PLAYER_QUERY_KEY, '');
   if (!lastQuery) {
     return null;
   }

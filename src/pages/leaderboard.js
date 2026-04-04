@@ -1,3 +1,4 @@
+import { CLIENT_PREFERENCE_KEYS, setClientPreference } from '../api/preferences-store.js';
 import { fetchTrackedLeaderboard, fetchTrackedSeasons } from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
 
@@ -236,7 +237,7 @@ export async function renderLeaderboardPage(container) {
       element.addEventListener('click', () => {
         const query = element.dataset.playerQuery || '';
         if (!query) return;
-        localStorage.setItem('lastPlayerQuery', query);
+        void setClientPreference(CLIENT_PREFERENCE_KEYS.lastPlayerQuery, query);
         window.history.pushState({}, '', '/player');
         window.dispatchEvent(new Event('popstate'));
       });

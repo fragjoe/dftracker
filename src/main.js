@@ -49,11 +49,12 @@ import {
   createIcons,
 } from 'lucide';
 import { listSeasons } from './api/client.js';
+import { CLIENT_PREFERENCE_KEYS, getClientPreference, setClientPreference } from './api/preferences-store.js';
 import { clearActivePlayerContext, getActivePlayerProfileSummary, renderPlayerPage, renderWealthPage } from './pages/player.js';
 import { getCurrentLanguage, getLanguageOptions, initializeLanguage, setCurrentLanguage, t } from './i18n.js';
 import { escapeHTML } from './utils/security.js';
 
-const STORAGE_NOTICE_KEY = 'storage_notice_acknowledged';
+const STORAGE_NOTICE_KEY = CLIENT_PREFERENCE_KEYS.storageNoticeDismissed;
 let activeRenderRequestId = 0;
 let apiStatus = 'checking';
 
@@ -323,7 +324,7 @@ function updateStorageNoticeVisibility() {
   const storageNotice = document.getElementById('storage-notice');
   if (!storageNotice) return;
 
-  const isDismissed = localStorage.getItem(STORAGE_NOTICE_KEY) === 'true';
+  const isDismissed = getClientPreference(STORAGE_NOTICE_KEY, false) === true;
   storageNotice.classList.toggle('hidden', isDismissed);
 
   if (!isDismissed && window.lucide) {
@@ -624,7 +625,7 @@ document.addEventListener('click', (e) => {
   const dismissStorageNoticeButton = e.target.closest('#storage-notice-dismiss');
   if (dismissStorageNoticeButton) {
     e.preventDefault();
-    localStorage.setItem(STORAGE_NOTICE_KEY, 'true');
+    void setClientPreference(STORAGE_NOTICE_KEY, true);
     updateStorageNoticeVisibility();
     return;
   }
@@ -652,8 +653,8 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Initial render
-window.addEventListener('DOMContentLoaded', () => {
-  initializeLanguage();
+window.addEventListener('DOMContentLoaded', async () => {
+  await initializeLanguage();
   updateStaticLanguageUI();
   updateStorageNoticeVisibility();
   updateApiStatusIndicator();

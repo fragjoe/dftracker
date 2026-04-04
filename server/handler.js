@@ -1,8 +1,10 @@
 import {
+  deleteClientPreference,
   getCachedSeasonsSummary,
   getCachedPlayerStatsSummary,
   getCachedPlayerWealthHistorySummary,
   getCachedPlayerWealthSummary,
+  getClientPreferences,
   getMarketCatalogSummary,
   getCachedMarketItemSummary,
   getCachedMarketPriceSummary,
@@ -20,7 +22,9 @@ import {
   writeMarketItemSeriesCache,
   writeMarketItemSummaryCache,
   writeCachedSeasons,
+  writeClientPreference,
 } from './db.js';
+import { randomUUID } from 'node:crypto';
 
 const DELTAFORCE_API_BASE = 'https://api.deltaforceapi.com';
 const CONNECT_HEADERS = {
@@ -32,12 +36,13 @@ const PLAYER_WEALTH_TTL_MS = 20 * 60 * 1000;
 const PLAYER_WEALTH_HISTORY_TTL_MS = 3 * 60 * 60 * 1000;
 const inflightRefreshes = new Map();
 
-export function sendJson(response, statusCode, payload) {
+export function sendJson(response, statusCode, payload, extraHeaders = {}) {
   response.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Internal-Cron-Token',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    ...extraHeaders,
   });
   response.end(JSON.stringify(payload));
 }
@@ -103,6 +108,57 @@ function readInternalCronToken(request) {
   const headerToken = request.headers?.['x-internal-cron-token'];
   const bearerToken = readAuthBearerToken(request);
   return String(headerToken || bearerToken || '').trim();
+}
+
+function parseCookies(request) {
+  const rawCookie = String(request.headers?.cookie || '');
+  return rawCookie.split(';').reduce((acc, part) => {
+    const [rawKey, ...rawValue] = part.split('=');
+    const key = String(rawKey || '').trim();
+    if (!key) {
+      return acc;
+    }
+
+    acc[key] = decodeURIComponent(rawValue.join('=').trim() || '');
+    return acc;
+  }, {});
+}
+
+function getClientContext(request) {
+  const cookies = parseCookies(request);
+  const existingClientId = String(cookies.dftracker_client_id || '').trim();
+  if (existingClientId) {
+    return {
+      clientId: existingClientId,
+      responseHeaders: {},
+    };
+  }
+
+  const clientId = randomUUID();
+  return {
+    clientId,
+    responseHeaders: {
+      'Set-Cookie': `dftracker_client_id=${encodeURIComponent(clientId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`,
+    },
+  };
+}
+
+function getPublicCacheHeaders(scope = '', { stale = true } = {}) {
+  const policies = {
+    playerResolve: 'public, s-maxage=3600, stale-while-revalidate=86400',
+    playerStats: `public, s-maxage=${stale ? 300 : 1200}, stale-while-revalidate=3600`,
+    playerWealth: `public, s-maxage=${stale ? 300 : 1200}, stale-while-revalidate=3600`,
+    playerWealthHistory: `public, s-maxage=${stale ? 900 : 10800}, stale-while-revalidate=43200`,
+    seasons: 'public, s-maxage=3600, stale-while-revalidate=86400',
+    leaderboard: 'public, s-maxage=300, stale-while-revalidate=1800',
+    marketCatalog: 'public, s-maxage=1800, stale-while-revalidate=21600',
+    marketItem: 'public, s-maxage=1800, stale-while-revalidate=21600',
+    marketItemSummary: 'public, s-maxage=300, stale-while-revalidate=3600',
+    marketItemSeries: 'public, s-maxage=300, stale-while-revalidate=3600',
+  };
+
+  const value = policies[scope];
+  return value ? { 'Cache-Control': value } : {};
 }
 
 async function fetchUpstreamSeasons({ pageSize = 50, pageToken = '', language = 'LANGUAGE_EN' } = {}) {
@@ -379,12 +435,59 @@ export async function handleTrackerRequest(request, response) {
   }
 
   try {
+    const isPreferenceRoute = pathname === '/tracker-api/preferences';
+    const clientContext = isPreferenceRoute
+      ? getClientContext(request)
+      : { clientId: '', responseHeaders: {} };
+    if (isPreferenceRoute) {
+      Object.entries(clientContext.responseHeaders).forEach(([headerName, headerValue]) => {
+        response.setHeader(headerName, headerValue);
+      });
+    }
+
     if (request.method === 'GET' && pathname === '/tracker-api/health') {
       sendJson(response, 200, {
         ok: true,
         service: 'dftracker-storage',
         ...(await getTrackerSummary()),
-      });
+      }, { 'Cache-Control': 'no-store' });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/tracker-api/preferences') {
+      const keys = url.searchParams.getAll('key').map((key) => String(key || '').trim()).filter(Boolean);
+      const preferences = await getClientPreferences(clientContext.clientId, keys);
+      sendJson(response, 200, {
+        preferences,
+      }, clientContext.responseHeaders);
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/tracker-api/preferences') {
+      const body = await readJsonBody(request);
+      const key = String(body.key || '').trim();
+      if (!key) {
+        throw new Error('Preference key is required');
+      }
+
+      if (body.remove) {
+        const result = await deleteClientPreference(clientContext.clientId, key);
+        sendJson(response, 200, {
+          ok: true,
+          ...result,
+        }, clientContext.responseHeaders);
+        return;
+      }
+
+      const result = await writeClientPreference(
+        clientContext.clientId,
+        key,
+        typeof body.value === 'undefined' ? null : body.value,
+      );
+      sendJson(response, 200, {
+        ok: true,
+        ...result,
+      }, clientContext.responseHeaders);
       return;
     }
 
@@ -394,43 +497,82 @@ export async function handleTrackerRequest(request, response) {
         deltaForceId: url.searchParams.get('deltaForceId') || '',
         name: url.searchParams.get('name') || '',
       });
-      sendJson(response, 200, payload);
+      sendJson(response, 200, payload, getPublicCacheHeaders('playerResolve', payload));
       return;
     }
 
     if (request.method === 'GET' && pathname === '/tracker-api/player/stats') {
-      const player = await getTrackedPlayer({
-        id: url.searchParams.get('playerId') || url.searchParams.get('id') || '',
-      });
+      const playerId = url.searchParams.get('playerId') || url.searchParams.get('id') || '';
+      const seasonId = url.searchParams.get('seasonId') || '';
+      const ranked = parseBooleanParam(url.searchParams.get('ranked'));
+      const cached = await getCachedPlayerStatsSummary({ playerId, seasonId, ranked });
+
+      if (cached.isFresh && cached.stats) {
+        sendJson(response, 200, {
+          stats: cached.stats,
+          fetchedAt: cached.fetchedAt,
+          updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
+          source: 'database',
+          stale: false,
+        }, getPublicCacheHeaders('playerStats', { stale: false }));
+        return;
+      }
+
+      const player = await getTrackedPlayer({ id: playerId });
       const payload = await getTrackedPlayerStats({
         player: player.player,
-        seasonId: url.searchParams.get('seasonId') || '',
-        ranked: parseBooleanParam(url.searchParams.get('ranked')),
+        seasonId,
+        ranked,
       });
-      sendJson(response, 200, payload);
+      sendJson(response, 200, payload, getPublicCacheHeaders('playerStats', payload));
       return;
     }
 
     if (request.method === 'GET' && pathname === '/tracker-api/player/wealth') {
-      const player = await getTrackedPlayer({
-        id: url.searchParams.get('playerId') || url.searchParams.get('id') || '',
-      });
+      const playerId = url.searchParams.get('playerId') || url.searchParams.get('id') || '';
+      const cached = await getCachedPlayerWealthSummary(playerId);
+
+      if (cached.isFresh && cached.stash) {
+        sendJson(response, 200, {
+          stash: cached.stash,
+          fetchedAt: cached.fetchedAt,
+          updatedAt: cached.stashUpdatedAt || cached.stash?.updatedAt || cached.stash?.createdAt || '',
+          source: 'database',
+          stale: false,
+        }, getPublicCacheHeaders('playerWealth', { stale: false }));
+        return;
+      }
+
+      const player = await getTrackedPlayer({ id: playerId });
       const payload = await getTrackedPlayerWealth({
         player: player.player,
       });
-      sendJson(response, 200, payload);
+      sendJson(response, 200, payload, getPublicCacheHeaders('playerWealth', payload));
       return;
     }
 
     if (request.method === 'GET' && pathname === '/tracker-api/player/wealth-history') {
-      const player = await getTrackedPlayer({
-        id: url.searchParams.get('playerId') || url.searchParams.get('id') || '',
-      });
+      const playerId = url.searchParams.get('playerId') || url.searchParams.get('id') || '';
+      const range = url.searchParams.get('range') || '30d';
+      const cached = await getCachedPlayerWealthHistorySummary(playerId);
+
+      if (cached.isFresh && Array.isArray(cached.history) && cached.history.length) {
+        sendJson(response, 200, {
+          history: filterHistoryByRange(cached.history, range),
+          fetchedAt: cached.fetchedAt,
+          updatedAt: cached.latestEntryAt || '',
+          source: 'database',
+          stale: false,
+        }, getPublicCacheHeaders('playerWealthHistory', { stale: false }));
+        return;
+      }
+
+      const player = await getTrackedPlayer({ id: playerId });
       const payload = await getTrackedPlayerWealthHistory({
         player: player.player,
-        range: url.searchParams.get('range') || '30d',
+        range,
       });
-      sendJson(response, 200, payload);
+      sendJson(response, 200, payload, getPublicCacheHeaders('playerWealthHistory', payload));
       return;
     }
 
@@ -441,7 +583,7 @@ export async function handleTrackerRequest(request, response) {
         ranked: parseBooleanParam(url.searchParams.get('ranked')),
         limit: Number(url.searchParams.get('limit') || 50),
       });
-      sendJson(response, 200, payload);
+      sendJson(response, 200, payload, getPublicCacheHeaders('leaderboard'));
       return;
     }
 
@@ -467,7 +609,7 @@ export async function handleTrackerRequest(request, response) {
         ),
         limit: Number(body.limit || url.searchParams.get('limit') || 200),
       });
-      sendJson(response, 200, payload);
+      sendJson(response, 200, payload, { 'Cache-Control': 'no-store' });
       return;
     }
 
@@ -482,7 +624,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt: cached.fetchedAt,
           source: 'database',
           stale: false,
-        });
+        }, getPublicCacheHeaders('seasons', { stale: false }));
         return;
       }
 
@@ -502,7 +644,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt,
           source: 'upstream',
           stale: false,
-        });
+        }, getPublicCacheHeaders('seasons'));
         return;
       } catch (error) {
         if (cached.seasons.length) {
@@ -511,7 +653,7 @@ export async function handleTrackerRequest(request, response) {
             fetchedAt: cached.fetchedAt,
             source: 'database',
             stale: true,
-          });
+          }, getPublicCacheHeaders('seasons'));
           return;
         }
 
@@ -556,7 +698,7 @@ export async function handleTrackerRequest(request, response) {
             fetchedAt: catalog.fetchedAt,
             source: 'upstream',
             stale: false,
-          });
+          }, getPublicCacheHeaders('marketCatalog'));
           return;
         } catch (error) {
           if (catalog.items.length || catalog.fetchedAt) {
@@ -567,7 +709,7 @@ export async function handleTrackerRequest(request, response) {
               fetchedAt: catalog.fetchedAt,
               source: 'database',
               stale: true,
-            });
+            }, getPublicCacheHeaders('marketCatalog'));
             return;
           }
           throw error;
@@ -581,7 +723,7 @@ export async function handleTrackerRequest(request, response) {
         fetchedAt: catalog.fetchedAt,
         source: 'database',
         stale: false,
-      });
+      }, getPublicCacheHeaders('marketCatalog', { stale: false }));
       return;
     }
 
@@ -596,7 +738,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt: cached.fetchedAt,
           source: 'database',
           stale: false,
-        });
+        }, getPublicCacheHeaders('marketItem', { stale: false }));
         return;
       }
 
@@ -612,7 +754,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt,
           source: 'upstream',
           stale: false,
-        });
+        }, getPublicCacheHeaders('marketItem'));
         return;
       } catch (error) {
         if (cached.item) {
@@ -621,7 +763,7 @@ export async function handleTrackerRequest(request, response) {
             fetchedAt: cached.fetchedAt,
             source: 'database',
             stale: true,
-          });
+          }, getPublicCacheHeaders('marketItem'));
           return;
         }
         throw error;
@@ -639,7 +781,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt: cached.fetchedAt,
           source: 'database',
           stale: false,
-        });
+        }, getPublicCacheHeaders('marketItemSummary', { stale: false }));
         return;
       }
 
@@ -689,7 +831,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt,
           source: 'upstream',
           stale: false,
-        });
+        }, getPublicCacheHeaders('marketItemSummary'));
         return;
       } catch (error) {
         if (cached.summary) {
@@ -698,7 +840,7 @@ export async function handleTrackerRequest(request, response) {
             fetchedAt: cached.fetchedAt,
             source: 'database',
             stale: true,
-          });
+          }, getPublicCacheHeaders('marketItemSummary'));
           return;
         }
         throw error;
@@ -717,7 +859,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt: cached.fetchedAt,
           source: 'database',
           stale: false,
-        });
+        }, getPublicCacheHeaders('marketItemSeries', { stale: false }));
         return;
       }
 
@@ -744,7 +886,7 @@ export async function handleTrackerRequest(request, response) {
           fetchedAt,
           source: 'upstream',
           stale: false,
-        });
+        }, getPublicCacheHeaders('marketItemSeries'));
         return;
       } catch (error) {
         if (cached.payload) {
@@ -753,7 +895,7 @@ export async function handleTrackerRequest(request, response) {
             fetchedAt: cached.fetchedAt,
             source: 'database',
             stale: true,
-          });
+          }, getPublicCacheHeaders('marketItemSeries'));
           return;
         }
         throw error;
@@ -763,28 +905,28 @@ export async function handleTrackerRequest(request, response) {
     if (request.method === 'POST' && pathname === '/tracker-api/players/sync-profile') {
       const body = await readJsonBody(request);
       const player = await upsertPlayer(body.player);
-      sendJson(response, 200, { ok: true, player });
+      sendJson(response, 200, { ok: true, player }, { 'Cache-Control': 'no-store' });
       return;
     }
 
     if (request.method === 'POST' && pathname === '/tracker-api/players/sync-stats') {
       const body = await readJsonBody(request);
       const result = await savePlayerStatsSnapshot(body);
-      sendJson(response, 200, { ok: true, ...result });
+      sendJson(response, 200, { ok: true, ...result }, { 'Cache-Control': 'no-store' });
       return;
     }
 
     if (request.method === 'POST' && pathname === '/tracker-api/players/sync-wealth') {
       const body = await readJsonBody(request);
       const result = await savePlayerWealthSnapshot(body);
-      sendJson(response, 200, { ok: true, ...result });
+      sendJson(response, 200, { ok: true, ...result }, { 'Cache-Control': 'no-store' });
       return;
     }
 
     if (request.method === 'POST' && pathname === '/tracker-api/players/sync-wealth-history') {
       const body = await readJsonBody(request);
       const result = await savePlayerWealthHistorySnapshot(body);
-      sendJson(response, 200, { ok: true, ...result });
+      sendJson(response, 200, { ok: true, ...result }, { 'Cache-Control': 'no-store' });
       return;
     }
 
@@ -792,11 +934,11 @@ export async function handleTrackerRequest(request, response) {
       ok: false,
       error: 'Not Found',
       path: pathname,
-    });
+    }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     sendJson(response, 400, {
       ok: false,
       error: error.message || 'Unknown error',
-    });
+    }, { 'Cache-Control': 'no-store' });
   }
 }

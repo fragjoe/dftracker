@@ -1,4 +1,12 @@
-const LANGUAGE_STORAGE_KEY = 'app_language';
+import {
+  CLIENT_PREFERENCE_KEYS,
+  getClientPreference,
+  initializeClientPreferences,
+  setClientPreference,
+} from './api/preferences-store.js';
+
+const LANGUAGE_STORAGE_KEY = CLIENT_PREFERENCE_KEYS.language;
+let currentLanguage = 'en';
 
 const dictionaries = {
   id: {
@@ -950,9 +958,13 @@ function interpolate(template, params = {}) {
 }
 
 export function getCurrentLanguage() {
-  const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  if (storedLanguage && supportedLanguages.includes(storedLanguage)) {
+  const storedLanguage = getClientPreference(LANGUAGE_STORAGE_KEY, null);
+  if (supportedLanguages.includes(storedLanguage)) {
     return storedLanguage;
+  }
+
+  if (supportedLanguages.includes(currentLanguage)) {
+    return currentLanguage;
   }
   return 'en';
 }
@@ -974,14 +986,18 @@ export function getLanguageOptions() {
 
 export function setCurrentLanguage(language) {
   const nextLanguage = supportedLanguages.includes(language) ? language : 'en';
-  localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+  currentLanguage = nextLanguage;
+  void setClientPreference(LANGUAGE_STORAGE_KEY, nextLanguage);
   document.documentElement.lang = dictionaries[nextLanguage].app.langAttr;
   window.dispatchEvent(new CustomEvent('app:language-change', {
     detail: { language: nextLanguage },
   }));
 }
 
-export function initializeLanguage() {
+export async function initializeLanguage() {
+  await initializeClientPreferences();
+  const storedLanguage = getClientPreference(LANGUAGE_STORAGE_KEY, 'en');
+  currentLanguage = supportedLanguages.includes(storedLanguage) ? storedLanguage : 'en';
   document.documentElement.lang = dictionaries[getCurrentLanguage()].app.langAttr;
 }
 
