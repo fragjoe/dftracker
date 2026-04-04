@@ -1,0 +1,32 @@
+name: Refresh Leaderboard
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger leaderboard refresh
+        env:
+          BASE_URL: https://dftracker.vercel.app
+          INTERNAL_CRON_TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -eu
+
+          TOKEN="${INTERNAL_CRON_TOKEN:-}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="${CRON_SECRET:-}"
+          fi
+
+          if [ -n "$TOKEN" ]; then
+            curl --fail --silent --show-error \
+              -H "X-Internal-Cron-Token: $TOKEN" \
+              "$BASE_URL/api/cron/refresh-leaderboard"
+          else
+            curl --fail --silent --show-error \
+              "$BASE_URL/api/cron/refresh-leaderboard"
+          fi
