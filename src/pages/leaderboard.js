@@ -1,6 +1,6 @@
 import { CLIENT_PREFERENCE_KEYS, setClientPreference } from '../api/preferences-store.js';
 import { fetchTrackedLeaderboard } from '../api/tracker-store.js';
-import { t } from '../i18n.js';
+import { getCurrentLanguage, t } from '../i18n.js';
 
 const DEFAULT_METRIC = 'rankedPoints';
 const LEADERBOARD_LIMIT = 100;
@@ -137,10 +137,10 @@ export async function renderLeaderboardPage(container) {
         <table class="leaderboard-table">
           <thead>
             <tr>
-              <th>${t('leaderboard.table.rank')}</th>
+              <th class="leaderboard-heading-center">${t('leaderboard.table.rank')}</th>
               <th>${t('leaderboard.table.player')}</th>
               <th>${t('leaderboard.table.level')}</th>
-              <th>${t(`leaderboard.metrics.${metricInput.value}`)}</th>
+              <th class="leaderboard-heading-center">${t(`leaderboard.metrics.${metricInput.value}`)}</th>
             </tr>
           </thead>
           <tbody>
@@ -199,12 +199,12 @@ export async function renderLeaderboardPage(container) {
       latestLeaderboardItems = data.items || [];
       renderLeaderboardFromCache();
 
-      const freshEntry = (data.items || []).find((item) => item.fetchedAt || item.statsUpdatedAt);
-      const syncText = freshEntry
-        ? `${t('leaderboard.lastSync')}: ${formatDateTime(freshEntry.statsUpdatedAt || freshEntry.fetchedAt)}`
+      const leaderboardUpdatedAt = data.updatedAt || data.savedAt || '';
+      const syncText = leaderboardUpdatedAt
+        ? `${t('leaderboard.lastSync')}: ${formatDateTime(leaderboardUpdatedAt)}`
         : '';
-      lastSyncEl.textContent = data.stale
-        ? [syncText, t('player.cachedFallbackNotice')].filter(Boolean).join(' • ')
+      lastSyncEl.textContent = data.stale && syncText
+        ? [syncText, t('player.cachedFallbackNotice')].join(' • ')
         : syncText;
     } catch (error) {
       if (requestId !== leaderboardViewRequestId || loadId !== latestLoadId) return;
@@ -259,13 +259,13 @@ function renderLeaderboardTableRow(entry, index, metricKey) {
 
   return `
     <tr class="leaderboard-table-row" data-player-query="${playerQuery}">
-      <td class="leaderboard-cell-rank">${entry.rank || rankValue}</td>
+      <td class="leaderboard-cell-rank leaderboard-cell-center">${entry.rank || rankValue}</td>
       <td>
         <div class="leaderboard-cell-player-name">${player.name || player.deltaForceId || 'Unknown'}</div>
         <div class="leaderboard-cell-player-id text-mono">${player.deltaForceId || player.id || '-'}</div>
       </td>
       <td>Lv.${player.levelOperations ?? '?'}</td>
-      <td class="text-mono">${metricValue}</td>
+      <td class="leaderboard-cell-metric leaderboard-cell-center text-mono">${metricValue}</td>
     </tr>
   `;
 }

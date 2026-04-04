@@ -1372,15 +1372,14 @@ html {
 }
 
 .leaderboard-filters {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px);
-  gap: var(--space-sm);
-  justify-content: end;
+  display: block;
+  width: 220px;
+  min-width: 220px;
 }
 
 .leaderboard-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 220px;
   align-items: stretch;
   gap: var(--space-sm);
 }
@@ -1400,6 +1399,7 @@ html {
 
 .leaderboard-search-bar {
   margin: 0;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1433,6 +1433,11 @@ html {
 .leaderboard-table td,
 .leaderboard-table th {
   vertical-align: middle;
+}
+
+.leaderboard-heading-center,
+.leaderboard-cell-center {
+  text-align: center;
 }
 
 .leaderboard-table-row {
