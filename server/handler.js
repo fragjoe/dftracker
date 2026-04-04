@@ -185,10 +185,14 @@ async function fetchUpstreamSeasons({ pageSize = 50, pageToken = '', language = 
 }
 
 async function postUpstream(path, body = {}) {
+  const sanitizedBody = Object.fromEntries(
+    Object.entries(body || {}).filter(([, value]) => value !== '' && value !== null && typeof value !== 'undefined'),
+  );
+
   const response = await fetch(`${DELTAFORCE_API_BASE}${path}`, {
     method: 'POST',
     headers: CONNECT_HEADERS,
-    body: JSON.stringify(body),
+    body: JSON.stringify(sanitizedBody),
   });
 
   if (!response.ok) {
