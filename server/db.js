@@ -129,22 +129,12 @@ function getNowIso() {
   return new Date().toISOString();
 }
 
-function getIsoWeekKey(dateInput = new Date()) {
+function getFiveMinuteBucketKey(dateInput = new Date()) {
   const sourceDate = dateInput instanceof Date ? dateInput : new Date(dateInput);
-  const utcDate = new Date(Date.UTC(
-    sourceDate.getUTCFullYear(),
-    sourceDate.getUTCMonth(),
-    sourceDate.getUTCDate(),
-  ));
-  const weekday = (utcDate.getUTCDay() + 6) % 7;
-  utcDate.setUTCDate(utcDate.getUTCDate() - weekday + 3);
-
-  const firstThursday = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 4));
-  const firstWeekday = (firstThursday.getUTCDay() + 6) % 7;
-  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstWeekday + 3);
-
-  const weekNumber = 1 + Math.round((utcDate - firstThursday) / (7 * 24 * 60 * 60 * 1000));
-  return `${utcDate.getUTCFullYear()}-W${String(weekNumber).padStart(2, '0')}`;
+  const roundedDate = new Date(sourceDate);
+  roundedDate.setUTCSeconds(0, 0);
+  roundedDate.setUTCMinutes(Math.floor(roundedDate.getUTCMinutes() / 5) * 5);
+  return roundedDate.toISOString().slice(0, 16);
 }
 
 function buildLeaderboardFilterKey({ metric = 'rankedPoints', seasonId = '', ranked = false } = {}) {
@@ -779,9 +769,9 @@ async function annotateLeaderboardRankChanges(items, {
   const filterKey = buildLeaderboardFilterKey({ metric, seasonId, ranked });
   const snapshots = await readLeaderboardRankSnapshots(filterKey);
   const now = new Date();
-  const currentWeekKey = getIsoWeekKey(now);
-  const previousWeekKey = getIsoWeekKey(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-  const previousSnapshot = snapshots.find((entry) => entry.weekKey === previousWeekKey) || null;
+  const currentBucketKey = getFiveMinuteBucketKey(now);
+  const previousBucketKey = getFiveMinuteBucketKey(new Date(now.getTime() - 5 * 60 * 1000));
+  const previousSnapshot = snapshots.find((entry) => entry.weekKey === previousBucketKey) || null;
   const currentRanks = {};
 
   const annotatedItems = items.map((entry, index) => {
@@ -813,10 +803,10 @@ async function annotateLeaderboardRankChanges(items, {
 
   const savedAt = now.toISOString();
   if (persistSnapshot) {
-    await writeLeaderboardRankSnapshot(filterKey, currentWeekKey, currentRanks, savedAt);
+    await writeLeaderboardRankSnapshot(filterKey, currentBucketKey, currentRanks, savedAt);
 
     const keepWeekKeys = Array.from(new Set(
-      [...snapshots.map((entry) => entry.weekKey), currentWeekKey].sort().slice(-8),
+      [...snapshots.map((entry) => entry.weekKey), currentBucketKey].sort().slice(-288),
     ));
     await pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys);
   }
@@ -825,9 +815,9 @@ async function annotateLeaderboardRankChanges(items, {
     items: annotatedItems,
     baseline: {
       filterKey,
-      period: 'week',
-      currentWeekKey,
-      previousWeekKey,
+      period: '5m',
+      currentBucketKey,
+      previousBucketKey,
       savedAt,
       hasPreviousSnapshot: Boolean(previousSnapshot),
     },
