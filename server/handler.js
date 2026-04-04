@@ -158,7 +158,15 @@ function getPublicCacheHeaders(scope = '', { stale = true } = {}) {
   };
 
   const value = policies[scope];
-  return value ? { 'Cache-Control': value } : {};
+  if (!value) {
+    return {};
+  }
+
+  return {
+    'Cache-Control': 'public, max-age=0, must-revalidate',
+    'CDN-Cache-Control': value,
+    'Vercel-CDN-Cache-Control': value,
+  };
 }
 
 async function fetchUpstreamSeasons({ pageSize = 50, pageToken = '', language = 'LANGUAGE_EN' } = {}) {
