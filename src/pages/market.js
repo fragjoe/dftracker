@@ -20,6 +20,7 @@ let lastKnownCurrentPrice = 0;
 let lastKnownBenchmarkPrice = 0;
 let lastKnownBenchmarkLabel = t('market.benchmarkPrice', { range: t('market.range.day7') });
 const marketItemDetailsCache = new Map();
+const marketPageCache = new Map();
 const MARKET_SEARCH_DEBOUNCE_MS = 280;
 let chartConstructorPromise = null;
 let activeMarketDetailViewId = 0;
@@ -206,6 +207,54 @@ export function renderMarketPage(container) {
     const prevBtn = container.querySelector('#market-prev');
     const nextBtn = container.querySelector('#market-next');
     const pageInfo = container.querySelector('#market-page-info');
+    const language = getMarketApiLanguage();
+    const pageKey = getMarketPageCacheKey({
+      language,
+      search: currentSearch,
+      pageToken: currentPageToken,
+      pageSize: 10,
+    });
+    const isCurrentRequest = () => requestId === latestLoadRequestId;
+
+    const cachedPage = marketPageCache.get(pageKey);
+    const hasPrev = tokenStack.length > 0;
+    const onNext = () => {
+      tokenStack.push(currentPageToken);
+      currentPageToken = cachedPage ? cachedPage.nextPageToken : '';
+      currentPage++;
+      loadMarketItems(container, 'next');
+    };
+
+    if (cachedPage) {
+      renderMarketListPage({
+        resultsEl,
+        paginationEl,
+        prevBtn,
+        nextBtn,
+        pageInfo,
+        searchMeta,
+        currentPage,
+        hasPrev,
+        items: cachedPage.items,
+        nextToken: cachedPage.nextPageToken,
+        currentSearch,
+        onNext: () => {
+          tokenStack.push(currentPageToken);
+          currentPageToken = cachedPage.nextPageToken;
+          currentPage++;
+          loadMarketItems(container, 'next');
+        },
+      });
+      void hydrateMarketListCards(cachedPage.items, resultsEl, isCurrentRequest);
+      // Prefetch next page in background so "Next" feels instant.
+      void prefetchMarketPage({
+        language,
+        search: currentSearch,
+        pageToken: cachedPage.nextPageToken,
+        pageSize: 10,
+      });
+      return;
+    }
 
     resultsEl.innerHTML = `
       <div class="loading-container" style="grid-column: 1 / -1">
@@ -222,7 +271,7 @@ export function renderMarketPage(container) {
       const data = await fetchTrackedMarketItems({
         filter: currentFilter,
         search: currentSearch,
-        language: getMarketApiLanguage(),
+        language,
         pageSize: 10,
         pageToken: currentPageToken,
       });
@@ -231,53 +280,38 @@ export function renderMarketPage(container) {
       const items = data.items || data.auctionItems || [];
       const nextToken = data.nextPageToken || '';
 
-      resultsEl.innerHTML = '';
-
-      if (items.length === 0) {
-        resultsEl.innerHTML = `
-          <div class="empty-state" style="grid-column: 1/-1">
-            <div class="empty-icon"><i data-lucide="package-search"></i></div>
-            <div class="empty-text">${t('market.noItemsTitle')}</div>
-            <div class="empty-hint">${t('market.noItemsHint')}</div>
-          </div>`;
-        paginationEl.style.display = 'none';
-        if (searchMeta) {
-          searchMeta.textContent = currentSearch
-            ? t('market.searchNoResults', { query: currentSearch })
-            : t('market.searchBrowse');
-        }
-        if (window.lucide) window.lucide.createIcons();
-        return;
-      }
-
-      items.forEach((item) => {
-        const card = createMarketListCard(item);
-        resultsEl.appendChild(card);
+      marketPageCache.set(pageKey, {
+        items,
+        nextPageToken: nextToken,
       });
 
-      // Update Pagination UI
-      paginationEl.style.display = 'flex';
-      prevBtn.disabled = tokenStack.length === 0;
-      nextBtn.disabled = !nextToken;
-      pageInfo.innerText = t('market.pageInfo', { page: currentPage });
-      if (searchMeta) {
-        searchMeta.textContent = currentSearch
-          ? t('market.searchResults', { count: items.length, query: currentSearch })
-          : t('market.searchBrowse');
-      }
+      renderMarketListPage({
+        resultsEl,
+        paginationEl,
+        prevBtn,
+        nextBtn,
+        pageInfo,
+        searchMeta,
+        currentPage,
+        hasPrev,
+        items,
+        nextToken,
+        currentSearch,
+        onNext: () => {
+          tokenStack.push(currentPageToken);
+          currentPageToken = nextToken;
+          currentPage++;
+          loadMarketItems(container, 'next');
+        },
+      });
 
-      // Update the "Next" click handler with the closure-scoped nextToken
-      const newNextBtn = nextBtn.cloneNode(true);
-      nextBtn.parentNode.replaceChild(newNextBtn, nextBtn);
-      newNextBtn.onclick = () => {
-        tokenStack.push(currentPageToken);
-        currentPageToken = nextToken;
-        currentPage++;
-        loadMarketItems(container, 'next');
-      };
-
-      if (window.lucide) window.lucide.createIcons();
-      void hydrateMarketListCards(items, resultsEl, () => requestId === latestLoadRequestId);
+      void hydrateMarketListCards(items, resultsEl, isCurrentRequest);
+      void prefetchMarketPage({
+        language,
+        search: currentSearch,
+        pageToken: nextToken,
+        pageSize: 10,
+      });
 
     } catch (err) {
       if (requestId !== latestLoadRequestId) return;
@@ -293,6 +327,95 @@ export function renderMarketPage(container) {
       }
     }
   }
+}
+
+function getMarketPageCacheKey({ language = '', search = '', pageToken = '', pageSize = 10 } = {}) {
+  return JSON.stringify({
+    language: String(language || ''),
+    search: String(search || '').trim().toLowerCase(),
+    pageToken: String(pageToken || ''),
+    pageSize: Number(pageSize) || 10,
+  });
+}
+
+async function prefetchMarketPage({ language = '', search = '', pageToken = '', pageSize = 10 } = {}) {
+  const safeToken = String(pageToken || '');
+  if (!safeToken) return;
+
+  const key = getMarketPageCacheKey({ language, search, pageToken: safeToken, pageSize });
+  if (marketPageCache.has(key)) return;
+
+  try {
+    const data = await fetchTrackedMarketItems({
+      filter: '',
+      search,
+      language,
+      pageSize,
+      pageToken: safeToken,
+    });
+    const items = data.items || data.auctionItems || [];
+    const nextToken = data.nextPageToken || '';
+    marketPageCache.set(key, {
+      items,
+      nextPageToken: nextToken,
+    });
+  } catch (error) {
+    // Prefetch should never block UI.
+  }
+}
+
+function renderMarketListPage({
+  resultsEl,
+  paginationEl,
+  prevBtn,
+  nextBtn,
+  pageInfo,
+  searchMeta,
+  currentPage,
+  hasPrev,
+  items,
+  nextToken,
+  currentSearch,
+  onNext,
+}) {
+  resultsEl.innerHTML = '';
+
+  if (!items.length) {
+    resultsEl.innerHTML = `
+      <div class="empty-state" style="grid-column: 1/-1">
+        <div class="empty-icon"><i data-lucide="package-search"></i></div>
+        <div class="empty-text">${t('market.noItemsTitle')}</div>
+        <div class="empty-hint">${t('market.noItemsHint')}</div>
+      </div>`;
+    paginationEl.style.display = 'none';
+    if (searchMeta) {
+      searchMeta.textContent = currentSearch
+        ? t('market.searchNoResults', { query: currentSearch })
+        : t('market.searchBrowse');
+    }
+    if (window.lucide) window.lucide.createIcons();
+    return;
+  }
+
+  items.forEach((item) => {
+    resultsEl.appendChild(createMarketListCard(item));
+  });
+
+  paginationEl.style.display = 'flex';
+  prevBtn.disabled = !hasPrev;
+  nextBtn.disabled = !nextToken;
+  pageInfo.innerText = t('market.pageInfo', { page: currentPage });
+  if (searchMeta) {
+    searchMeta.textContent = currentSearch
+      ? t('market.searchResults', { count: items.length, query: currentSearch })
+      : t('market.searchBrowse');
+  }
+
+  const newNextBtn = nextBtn.cloneNode(true);
+  nextBtn.parentNode.replaceChild(newNextBtn, nextBtn);
+  newNextBtn.onclick = onNext;
+
+  if (window.lucide) window.lucide.createIcons();
 }
 
 function createMarketListCard(item) {
