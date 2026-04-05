@@ -230,12 +230,10 @@ export function renderMarketPage(container) {
 
       const items = data.items || data.auctionItems || [];
       const nextToken = data.nextPageToken || '';
-      const enrichedItems = await enrichMarketItems(items);
-      if (requestId !== latestLoadRequestId) return;
 
       resultsEl.innerHTML = '';
 
-      if (enrichedItems.length === 0) {
+      if (items.length === 0) {
         resultsEl.innerHTML = `
           <div class="empty-state" style="grid-column: 1/-1">
             <div class="empty-icon"><i data-lucide="package-search"></i></div>
@@ -252,33 +250,8 @@ export function renderMarketPage(container) {
         return;
       }
 
-      enrichedItems.forEach(item => {
-        const card = document.createElement('div');
-        card.className = 'list-item-card';
-        const spreadPercent = getSpreadPercent(item.price, item.marketBaseline7d);
-        const marketStatus = getMarketStatus(item.price, item.marketBaseline7d);
-        card.innerHTML = `
-          <div class="list-item-icon">
-            <i data-lucide="package" style="width: 16px; height: 16px;"></i>
-          </div>
-          <div class="list-item-main">
-            <div class="list-item-info">
-              <div class="list-item-name">${escapeHTML(item.name || item.langEn || item.displayName || t('market.itemType'))}</div>
-              <div class="list-item-category">${t('market.mapIdPrefix')}: ${escapeHTML(item.id.substring(0, 8))}...</div>
-            </div>
-            <div class="list-item-action" style="margin-left: auto; gap: var(--space-md); align-items: center;">
-              <div style="text-align: right;">
-                <div class="list-item-price ${marketStatus.colorClass}">${formatPriceShort(item.price || 0)}</div>
-                <div class="${marketStatus.colorClass}" style="font-size: 0.8rem; font-weight: 700; font-family: var(--font-mono);">
-                  ${formatMarketSpread(spreadPercent)}
-                </div>
-              </div>
-            </div>
-          </div>
-        `;
-        card.addEventListener('click', () => {
-          openMarketItemOverlay(item.id);
-        });
+      items.forEach((item) => {
+        const card = createMarketListCard(item);
         resultsEl.appendChild(card);
       });
 
@@ -289,7 +262,7 @@ export function renderMarketPage(container) {
       pageInfo.innerText = t('market.pageInfo', { page: currentPage });
       if (searchMeta) {
         searchMeta.textContent = currentSearch
-          ? t('market.searchResults', { count: enrichedItems.length, query: currentSearch })
+          ? t('market.searchResults', { count: items.length, query: currentSearch })
           : t('market.searchBrowse');
       }
 
@@ -304,6 +277,7 @@ export function renderMarketPage(container) {
       };
 
       if (window.lucide) window.lucide.createIcons();
+      void hydrateMarketListCards(items, resultsEl, () => requestId === latestLoadRequestId);
 
     } catch (err) {
       if (requestId !== latestLoadRequestId) return;
@@ -318,6 +292,88 @@ export function renderMarketPage(container) {
         searchMeta.textContent = t('market.loadErrorTitle');
       }
     }
+  }
+}
+
+function createMarketListCard(item) {
+  const card = document.createElement('div');
+  card.className = 'list-item-card';
+  card.dataset.itemId = item.id;
+  card.innerHTML = `
+    <div class="list-item-icon">
+      <i data-lucide="package" style="width: 16px; height: 16px;"></i>
+    </div>
+    <div class="list-item-main">
+      <div class="list-item-info">
+        <div class="list-item-name">${escapeHTML(item.name || item.langEn || item.displayName || t('market.itemType'))}</div>
+        <div class="list-item-category">${t('market.mapIdPrefix')}: ${escapeHTML(item.id.substring(0, 8))}...</div>
+      </div>
+      <div class="list-item-action" style="margin-left: auto; gap: var(--space-md); align-items: center;">
+        <div style="text-align: right;">
+          <div class="list-item-price text-gold" data-role="price">${t('market.detailLoading')}</div>
+          <div class="text-gold" data-role="spread" style="font-size: 0.8rem; font-weight: 700; font-family: var(--font-mono);">-</div>
+        </div>
+      </div>
+    </div>
+  `;
+  card.addEventListener('click', () => {
+    openMarketItemOverlay(item.id);
+  });
+  return card;
+}
+
+async function hydrateMarketListCards(items, resultsEl, isCurrentRequest) {
+  await Promise.all(items.map(async (item) => {
+    const snapshot = await getMarketListItemSnapshot(item);
+    if (!isCurrentRequest()) return;
+    const card = Array.from(resultsEl.querySelectorAll('[data-item-id]'))
+      .find((element) => element.dataset.itemId === item.id);
+    if (!card) return;
+    applyMarketListSnapshot(card, snapshot);
+  }));
+}
+
+async function getMarketListItemSnapshot(item) {
+  if (marketItemDetailsCache.has(item.id)) {
+    return marketItemDetailsCache.get(item.id);
+  }
+
+  try {
+    const summary = await fetchTrackedMarketItemSummary({
+      itemId: item.id,
+      language: getMarketApiLanguage(),
+    });
+    const snapshot = {
+      price: Number(summary.price || 0),
+      marketBaseline7d: Number(summary.marketBaseline7d || 0),
+    };
+    marketItemDetailsCache.set(item.id, snapshot);
+    return snapshot;
+  } catch (error) {
+    console.error(`Failed to enrich market item ${item.id}:`, error);
+    return {
+      price: 0,
+      marketBaseline7d: 0,
+    };
+  }
+}
+
+function applyMarketListSnapshot(card, snapshot) {
+  const safeSnapshot = snapshot || { price: 0, marketBaseline7d: 0 };
+  const spreadPercent = getSpreadPercent(safeSnapshot.price, safeSnapshot.marketBaseline7d);
+  const marketStatus = getMarketStatus(safeSnapshot.price, safeSnapshot.marketBaseline7d);
+  const priceEl = card.querySelector('[data-role="price"]');
+  const spreadEl = card.querySelector('[data-role="spread"]');
+  if (priceEl) {
+    priceEl.className = `list-item-price ${marketStatus.colorClass}`;
+    priceEl.textContent = formatPriceShort(safeSnapshot.price || 0);
+  }
+  if (spreadEl) {
+    spreadEl.className = marketStatus.colorClass;
+    spreadEl.style.fontSize = '0.8rem';
+    spreadEl.style.fontWeight = '700';
+    spreadEl.style.fontFamily = 'var(--font-mono)';
+    spreadEl.textContent = formatMarketSpread(spreadPercent);
   }
 }
 
@@ -739,42 +795,6 @@ async function loadRecentPrices(viewState) {
     const curEl = getViewElement(viewState, '#modal-current-price');
     if (curEl) curEl.innerHTML = `<span class="text-red">${t('market.loadErrorTitle')}</span>`;
   }
-}
-
-async function enrichMarketItems(items) {
-  const detailResults = await Promise.all(items.map(async (item) => {
-    if (marketItemDetailsCache.has(item.id)) {
-      return {
-        ...item,
-        ...marketItemDetailsCache.get(item.id),
-      };
-    }
-
-    try {
-      const summary = await fetchTrackedMarketItemSummary({
-        itemId: item.id,
-        language: getMarketApiLanguage(),
-      });
-      const snapshot = {
-        price: Number(summary.price || 0),
-        marketBaseline7d: Number(summary.marketBaseline7d || 0),
-      };
-      marketItemDetailsCache.set(item.id, snapshot);
-      return {
-        ...item,
-        ...snapshot,
-      };
-    } catch (error) {
-      console.error(`Failed to enrich market item ${item.id}:`, error);
-      return {
-        ...item,
-        price: 0,
-        marketBaseline7d: 0,
-      };
-    }
-  }));
-
-  return detailResults;
 }
 
 async function getLatestMarketSnapshot(itemId) {
