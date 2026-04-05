@@ -45,9 +45,9 @@ async function ensurePostgresSchema() {
       delta_force_id TEXT UNIQUE,
       name TEXT NOT NULL,
       level_operations INTEGER,
-      registered_at TEXT,
-      first_seen_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
+      registered_at TIMESTAMPTZ,
+      first_seen_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL
     )
   `;
 
@@ -57,8 +57,8 @@ async function ensurePostgresSchema() {
       season_id TEXT NOT NULL DEFAULT '',
       ranked BOOLEAN NOT NULL DEFAULT FALSE,
       stats_json JSONB NOT NULL,
-      stats_updated_at TEXT,
-      fetched_at TEXT NOT NULL,
+      stats_updated_at TIMESTAMPTZ,
+      fetched_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (player_id, season_id, ranked)
     )
   `;
@@ -67,8 +67,8 @@ async function ensurePostgresSchema() {
     CREATE TABLE IF NOT EXISTS player_wealth_snapshots (
       player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
       stash_json JSONB NOT NULL,
-      stash_updated_at TEXT,
-      fetched_at TEXT NOT NULL
+      stash_updated_at TIMESTAMPTZ,
+      fetched_at TIMESTAMPTZ NOT NULL
     )
   `;
 
@@ -76,15 +76,10 @@ async function ensurePostgresSchema() {
     CREATE TABLE IF NOT EXISTS player_wealth_history_snapshots (
       player_id TEXT PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
       history_json JSONB NOT NULL,
-      latest_entry_at TEXT,
+      latest_entry_at TIMESTAMPTZ,
       points_count INTEGER NOT NULL DEFAULT 0,
-      fetched_at TEXT NOT NULL
+      fetched_at TIMESTAMPTZ NOT NULL
     )
-  `;
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_players_delta_force_id
-      ON players(delta_force_id)
   `;
 
   await sql`
@@ -99,25 +94,7 @@ async function ensurePostgresSchema() {
       name TEXT NOT NULL,
       active BOOLEAN NOT NULL DEFAULT FALSE,
       raw_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL
-    )
-  `;
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
-      ON seasons_cache(active, number)
-  `;
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS market_catalog_cache (
-      cache_key TEXT PRIMARY KEY,
-      filter TEXT NOT NULL,
-      page_token TEXT NOT NULL,
-      page_size INTEGER NOT NULL,
-      language TEXT NOT NULL,
-      items_json JSONB NOT NULL,
-      next_page_token TEXT,
-      fetched_at TEXT NOT NULL
+      fetched_at TIMESTAMPTZ NOT NULL
     )
   `;
 
@@ -126,7 +103,7 @@ async function ensurePostgresSchema() {
       item_id TEXT NOT NULL,
       language TEXT NOT NULL,
       item_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL,
+      fetched_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (item_id, language)
     )
   `;
@@ -136,7 +113,7 @@ async function ensurePostgresSchema() {
       item_id TEXT NOT NULL,
       language TEXT NOT NULL,
       summary_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL,
+      fetched_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (item_id, language)
     )
   `;
@@ -147,9 +124,14 @@ async function ensurePostgresSchema() {
       language TEXT NOT NULL,
       days INTEGER NOT NULL,
       series_json JSONB NOT NULL,
-      fetched_at TEXT NOT NULL,
+      fetched_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (item_id, language, days)
     )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
+      ON seasons_cache(active, number)
   `;
 }
 

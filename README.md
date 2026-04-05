@@ -108,7 +108,7 @@ App memakai History API dan route berikut:
 
 ### 2. Active Player Context
 
-State player aktif disimpan dan dibaca ulang dari browser storage.
+State player aktif dipertahankan lewat storage aplikasi, dengan Recent Searches tetap disimpan di browser.
 
 Tujuannya:
 
@@ -214,8 +214,10 @@ Project ini sekarang punya storage API lokal berbasis SQLite untuk menyimpan:
 - snapshot stats per `seasonId` dan mode ranked
 - snapshot wealth summary
 - snapshot wealth history
+- cache seasons dan market
+- client preferences untuk bahasa dan konteks player aktif
 
-Storage ini disiapkan sebagai fondasi untuk fitur berikutnya seperti leaderboard.
+Recent Searches tetap disimpan di browser agar tetap lokal untuk perangkat pengguna.
 
 Jalankan mode development:
 
@@ -247,11 +249,39 @@ Script ini akan membaca data dari `.data/dftracker.sqlite` lalu melakukan upsert
 Endpoint dasar yang sudah tersedia:
 
 - `GET /tracker-api/health`
+- `GET /tracker-api/preferences`
+- `POST /tracker-api/preferences`
+- `GET /tracker-api/player/resolve`
+- `GET /tracker-api/player/stats`
+- `GET /tracker-api/player/wealth`
+- `GET /tracker-api/player/wealth-history`
 - `GET /tracker-api/leaderboard`
-- `POST /tracker-api/players/sync-profile`
-- `POST /tracker-api/players/sync-stats`
-- `POST /tracker-api/players/sync-wealth`
-- `POST /tracker-api/players/sync-wealth-history`
+- `GET /tracker-api/seasons`
+- `GET /tracker-api/market/items`
+- `GET /tracker-api/market/item`
+- `GET /tracker-api/market/item-summary`
+- `GET /tracker-api/market/item-series`
+
+## Database Cleanup
+
+Beberapa database lama bisa masih menyimpan artefak schema lama atau tipe kolom waktu yang masih `text`.
+
+Migrasi cleanup yang tersedia:
+
+```text
+db/migrations/2026-04-05_drop_legacy_leaderboard_rank_snapshots.sql
+db/migrations/2026-04-05_align_postgres_schema.sql
+```
+
+Ringkasannya:
+
+- `2026-04-05_drop_legacy_leaderboard_rank_snapshots.sql`
+  menghapus tabel leaderboard lama yang sudah tidak dipakai
+- `2026-04-05_align_postgres_schema.sql`
+  merapikan schema Postgres/Supabase aktif:
+  menghapus `market_catalog_cache` yang sudah legacy,
+  menghapus index redundant `idx_players_delta_force_id`,
+  dan mengubah kolom waktu utama menjadi `TIMESTAMPTZ`
 
 ## Local Development
 
