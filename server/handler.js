@@ -33,6 +33,8 @@ const CONNECT_HEADERS = {
 const PLAYER_STATS_TTL_MS = 20 * 60 * 1000;
 const PLAYER_WEALTH_TTL_MS = 20 * 60 * 1000;
 const PLAYER_WEALTH_HISTORY_TTL_MS = 3 * 60 * 60 * 1000;
+const MARKET_CATALOG_SYNC_LANGUAGES = ['LANGUAGE_EN', 'LANGUAGE_ZH_HANS'];
+const MARKET_CATALOG_UPSTREAM_PAGE_SIZE = 100;
 const inflightRefreshes = new Map();
 
 export function sendJson(response, statusCode, payload, extraHeaders = {}) {
@@ -202,6 +204,76 @@ async function postUpstream(path, body = {}) {
   }
 
   return response.json();
+}
+
+async function syncMarketCatalogLanguage(language = 'LANGUAGE_EN', { force = false } = {}) {
+  const cachedCatalog = await getMarketCatalogSummary({
+    language,
+    search: '',
+    pageToken: '',
+    pageSize: 1,
+  });
+
+  if (!force && cachedCatalog.isFresh && cachedCatalog.items.length) {
+    return {
+      language,
+      fetchedAt: cachedCatalog.fetchedAt,
+      totalSize: cachedCatalog.totalSize,
+      source: 'database',
+      skipped: true,
+    };
+  }
+
+  return runSingleFlight('market-catalog', [language], async () => {
+    let nextPageToken = '';
+    const allItems = [];
+
+    do {
+      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+        filter: '',
+        pageToken: nextPageToken,
+        pageSize: MARKET_CATALOG_UPSTREAM_PAGE_SIZE,
+        language,
+      });
+      const pageItems = upstream.items || upstream.auctionItems || [];
+      allItems.push(...pageItems);
+      nextPageToken = upstream.nextPageToken || '';
+    } while (nextPageToken);
+
+    const fetchedAt = new Date().toISOString();
+    await replaceMarketCatalog(language, allItems, fetchedAt);
+
+    return {
+      language,
+      fetchedAt,
+      totalSize: allItems.length,
+      source: 'upstream',
+      skipped: false,
+    };
+  });
+}
+
+export async function refreshMarketCatalogs({
+  languages = MARKET_CATALOG_SYNC_LANGUAGES,
+  force = false,
+} = {}) {
+  const normalizedLanguages = Array.from(new Set(
+    (Array.isArray(languages) ? languages : [languages])
+      .filter(Boolean)
+      .map((language) => String(language).trim()),
+  ));
+
+  const results = [];
+  for (const language of normalizedLanguages) {
+    results.push(await syncMarketCatalogLanguage(language, { force }));
+  }
+
+  return {
+    refreshedAt: new Date().toISOString(),
+    force,
+    languages: normalizedLanguages,
+    results,
+  };
 }
 
 function getSingleFlightKey(scope, parts = []) {
@@ -657,25 +729,7 @@ export async function handleTrackerRequest(request, response) {
 
       if (!catalog.isFresh || !catalog.items.length) {
         try {
-          await runSingleFlight('market-catalog', [language], async () => {
-            let nextPageToken = '';
-            const allItems = [];
-
-            do {
-              const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
-                filter: '',
-                pageToken: nextPageToken,
-                pageSize: 100,
-                language,
-              });
-              const pageItems = upstream.items || upstream.auctionItems || [];
-              allItems.push(...pageItems);
-              nextPageToken = upstream.nextPageToken || '';
-            } while (nextPageToken);
-
-            const fetchedAt = new Date().toISOString();
-            await replaceMarketCatalog(language, allItems, fetchedAt);
-          });
+          await syncMarketCatalogLanguage(language);
 
           catalog = await getMarketCatalogSummary({ language, search, pageToken, pageSize });
           sendJson(response, 200, {

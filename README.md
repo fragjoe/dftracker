@@ -261,6 +261,29 @@ Endpoint dasar yang sudah tersedia:
 - `GET /tracker-api/market/item`
 - `GET /tracker-api/market/item-summary`
 - `GET /tracker-api/market/item-series`
+- `GET /api/cron/refresh-market-catalog`
+
+## Market Catalog Sync
+
+Catalog market sekarang disimpan penuh per bahasa di database, bukan lagi bertambah hanya saat user berpindah halaman list.
+
+Flow-nya:
+
+- request market pertama akan melakukan full sync seluruh item jika katalog kosong atau stale
+- backend menyimpan seluruh katalog item ke `market_item_cache`
+- request halaman berikutnya tinggal membaca katalog dari database
+- harga item tetap diambil terpisah lewat endpoint price/series saat dibutuhkan
+
+Untuk deployment, project ini juga menyediakan cron harian:
+
+- `GET /api/cron/refresh-market-catalog`
+
+Cron ini tidak selalu menarik data baru setiap hari. Ia hanya akan menjalankan full sync jika katalog terakhir sudah melewati TTL `90 hari`. Pendekatan ini dipakai karena scheduler praktis lebih stabil jika berjalan harian, sementara keputusan refresh tetap dikendalikan oleh umur data katalog.
+
+Supaya endpoint cron aman, set salah satu environment variable berikut:
+
+- `CRON_SECRET`
+- `INTERNAL_CRON_TOKEN`
 
 ## Database Cleanup
 
