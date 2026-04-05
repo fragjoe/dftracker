@@ -353,12 +353,6 @@ function ensureSqliteReady() {
     CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_item
       ON market_item_cache(language, item_id);
 
-  CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
-    ON market_item_cache(language, sort_name_text, item_id);
-
-    CREATE INDEX IF NOT EXISTS idx_market_item_cache_search_text
-      ON market_item_cache(search_text);
-
     CREATE TABLE IF NOT EXISTS market_item_summary_cache (
       item_id TEXT NOT NULL,
       language TEXT NOT NULL,
@@ -386,6 +380,73 @@ function ensureSqliteReady() {
 
     CREATE INDEX IF NOT EXISTS idx_client_preferences_client_updated
       ON client_preferences(client_id, updated_at DESC);
+  `);
+
+  ensureSqliteCompatibilitySchema();
+}
+
+function ensureSqliteColumn(tableName, columnName, definition) {
+  const columns = sqliteDb.prepare(`PRAGMA table_info(${tableName})`).all();
+  const hasColumn = columns.some((column) => column?.name === columnName);
+  if (!hasColumn) {
+    sqliteDb.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function ensureSqliteCompatibilitySchema() {
+  ensureSqliteColumn('player_stats_snapshots', 'ranked_points', 'REAL NOT NULL DEFAULT 0');
+  ensureSqliteColumn('player_stats_snapshots', 'kd_ratio', 'REAL NOT NULL DEFAULT 0');
+  ensureSqliteColumn('player_stats_snapshots', 'extraction_rate', 'REAL NOT NULL DEFAULT 0');
+  ensureSqliteColumn('player_stats_snapshots', 'total_kills', 'INTEGER NOT NULL DEFAULT 0');
+  ensureSqliteColumn('player_stats_snapshots', 'matches_played', 'INTEGER NOT NULL DEFAULT 0');
+  ensureSqliteColumn('player_stats_snapshots', 'play_time', 'INTEGER NOT NULL DEFAULT 0');
+  ensureSqliteColumn('player_stats_snapshots', 'extracted_assets', 'INTEGER NOT NULL DEFAULT 0');
+
+  ensureSqliteColumn('market_item_cache', 'name_text', "TEXT NOT NULL DEFAULT ''");
+  ensureSqliteColumn('market_item_cache', 'search_text', "TEXT NOT NULL DEFAULT ''");
+  ensureSqliteColumn('market_item_cache', 'sort_name_text', "TEXT NOT NULL DEFAULT ''");
+
+  sqliteDb.exec(`
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
+      ON market_item_cache(language, sort_name_text, item_id);
+
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_search_text
+      ON market_item_cache(search_text);
+
+    UPDATE player_stats_snapshots
+    SET
+      ranked_points = COALESCE(CAST(json_extract(stats_json, '$.rankedPoints') AS REAL), 0),
+      kd_ratio = COALESCE(CAST(json_extract(stats_json, '$.kdRatio') AS REAL), 0),
+      extraction_rate = COALESCE(CAST(json_extract(stats_json, '$.extractionRate') AS REAL), 0),
+      total_kills = COALESCE(CAST(json_extract(stats_json, '$.totalKills') AS INTEGER), 0),
+      matches_played = COALESCE(CAST(json_extract(stats_json, '$.matchesPlayed') AS INTEGER), 0),
+      play_time = COALESCE(CAST(json_extract(stats_json, '$.playTime') AS INTEGER), 0),
+      extracted_assets = COALESCE(CAST(json_extract(stats_json, '$.extractedAssets') AS INTEGER), 0)
+    WHERE stats_json IS NOT NULL AND stats_json != '';
+
+    UPDATE market_item_cache
+    SET
+      name_text = COALESCE(NULLIF(json_extract(item_json, '$.name'), ''), item_id),
+      search_text = LOWER(TRIM(
+        COALESCE(json_extract(item_json, '$.name'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.langEn'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.langZhHans'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.displayName'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.description'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.categoryName'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.category'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.type'), '') || ' ' ||
+        COALESCE(json_extract(item_json, '$.id'), '')
+      )),
+      sort_name_text = LOWER(COALESCE(
+        NULLIF(json_extract(item_json, '$.name'), ''),
+        NULLIF(json_extract(item_json, '$.langEn'), ''),
+        NULLIF(json_extract(item_json, '$.displayName'), ''),
+        NULLIF(json_extract(item_json, '$.langZhHans'), ''),
+        json_extract(item_json, '$.id'),
+        item_id
+      ))
+    WHERE item_json IS NOT NULL AND item_json != '';
   `);
 }
 
@@ -1546,7 +1607,7 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
   if (storageMode === 'postgres') {
     const searchPattern = `%${query}%`;
     const rows = await postgresClient`
-      SELECT item_json, fetched_at
+      SELECT item_id, name_text, fetched_at
       FROM market_item_cache
       WHERE language = ${normalizedLanguage}
         AND (
@@ -1577,7 +1638,10 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
     `;
 
     const fetchedAt = latestRow[0]?.fetched_at || '';
-    const items = rows.map((row) => row.item_json || {});
+    const items = rows.map((row) => ({
+      id: row.item_id,
+      name: row.name_text || row.item_id,
+    }));
     const nextPageToken = offset + safePageSize < totalSize
       ? encodeMarketOffsetToken(offset + safePageSize)
       : '';
@@ -1592,7 +1656,7 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
   }
   const searchPattern = `%${query}%`;
   const rows = sqliteDb.prepare(`
-    SELECT item_json, fetched_at
+    SELECT item_id, name_text, fetched_at
     FROM market_item_cache
     WHERE language = ?
       AND (? = '' OR search_text LIKE ?)
@@ -1618,7 +1682,10 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
 
   const fetchedAt = latestRow?.fetched_at || '';
   const isFresh = isFreshTimestamp(fetchedAt, MARKET_CATALOG_TTL_MS);
-  const items = rows.map((row) => parseJsonSafely(row.item_json, {}));
+  const items = rows.map((row) => ({
+    id: row.item_id,
+    name: row.name_text || row.item_id,
+  }));
   const nextPageToken = offset + safePageSize < totalSize
     ? encodeMarketOffsetToken(offset + safePageSize)
     : '';
