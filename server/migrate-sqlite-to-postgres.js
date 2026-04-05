@@ -38,6 +38,23 @@ const sql = postgres(postgresUrl, {
   max: 1,
 });
 
+function toSafeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizePlayerStatsColumns(stats = {}) {
+  return {
+    rankedPoints: toSafeNumber(stats?.rankedPoints, 0),
+    kdRatio: toSafeNumber(stats?.kdRatio, 0),
+    extractionRate: toSafeNumber(stats?.extractionRate, 0),
+    totalKills: Math.max(0, Math.trunc(toSafeNumber(stats?.totalKills, 0))),
+    matchesPlayed: Math.max(0, Math.trunc(toSafeNumber(stats?.matchesPlayed, 0))),
+    playTime: Math.max(0, Math.trunc(toSafeNumber(stats?.playTime, 0))),
+    extractedAssets: Math.max(0, Math.trunc(toSafeNumber(stats?.extractedAssets, 0))),
+  };
+}
+
 async function ensurePostgresSchema() {
   await sql`
     CREATE TABLE IF NOT EXISTS players (
@@ -57,6 +74,13 @@ async function ensurePostgresSchema() {
       season_id TEXT NOT NULL DEFAULT '',
       ranked BOOLEAN NOT NULL DEFAULT FALSE,
       stats_json JSONB NOT NULL,
+      ranked_points DOUBLE PRECISION NOT NULL DEFAULT 0,
+      kd_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+      extraction_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+      total_kills INTEGER NOT NULL DEFAULT 0,
+      matches_played INTEGER NOT NULL DEFAULT 0,
+      play_time INTEGER NOT NULL DEFAULT 0,
+      extracted_assets BIGINT NOT NULL DEFAULT 0,
       stats_updated_at TIMESTAMPTZ,
       fetched_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (player_id, season_id, ranked)
@@ -103,9 +127,17 @@ async function ensurePostgresSchema() {
       item_id TEXT NOT NULL,
       language TEXT NOT NULL,
       item_json JSONB NOT NULL,
+      name_text TEXT NOT NULL DEFAULT '',
+      search_text TEXT NOT NULL DEFAULT '',
+      sort_name_text TEXT NOT NULL DEFAULT '',
       fetched_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (item_id, language)
     )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
+      ON market_item_cache(language, sort_name_text, item_id)
   `;
 
   await sql`
@@ -214,12 +246,21 @@ async function migrate() {
     }
 
     for (const row of data.stats) {
+      const stats = JSON.parse(row.stats_json || '{}');
+      const statColumns = normalizePlayerStatsColumns(stats);
       await tx`
         INSERT INTO player_stats_snapshots (
           player_id,
           season_id,
           ranked,
           stats_json,
+          ranked_points,
+          kd_ratio,
+          extraction_rate,
+          total_kills,
+          matches_played,
+          play_time,
+          extracted_assets,
           stats_updated_at,
           fetched_at
         )
@@ -227,12 +268,26 @@ async function migrate() {
           ${row.player_id},
           ${row.season_id},
           ${Boolean(row.ranked)},
-          ${tx.json(JSON.parse(row.stats_json || '{}'))},
+          ${tx.json(stats)},
+          ${statColumns.rankedPoints},
+          ${statColumns.kdRatio},
+          ${statColumns.extractionRate},
+          ${statColumns.totalKills},
+          ${statColumns.matchesPlayed},
+          ${statColumns.playTime},
+          ${statColumns.extractedAssets},
           ${row.stats_updated_at},
           ${row.fetched_at}
         )
         ON CONFLICT (player_id, season_id, ranked) DO UPDATE SET
           stats_json = EXCLUDED.stats_json,
+          ranked_points = EXCLUDED.ranked_points,
+          kd_ratio = EXCLUDED.kd_ratio,
+          extraction_rate = EXCLUDED.extraction_rate,
+          total_kills = EXCLUDED.total_kills,
+          matches_played = EXCLUDED.matches_played,
+          play_time = EXCLUDED.play_time,
+          extracted_assets = EXCLUDED.extracted_assets,
           stats_updated_at = EXCLUDED.stats_updated_at,
           fetched_at = EXCLUDED.fetched_at
       `;

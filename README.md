@@ -271,6 +271,7 @@ Migrasi cleanup yang tersedia:
 ```text
 db/migrations/2026-04-05_drop_legacy_leaderboard_rank_snapshots.sql
 db/migrations/2026-04-05_align_postgres_schema.sql
+db/migrations/2026-04-05_add_hybrid_stats_and_market_columns.sql
 ```
 
 Ringkasannya:
@@ -282,6 +283,9 @@ Ringkasannya:
   menghapus `market_catalog_cache` yang sudah legacy,
   menghapus index redundant `idx_players_delta_force_id`,
   dan mengubah kolom waktu utama menjadi `TIMESTAMPTZ`
+- `2026-04-05_add_hybrid_stats_and_market_columns.sql`
+  menambahkan kolom hybrid untuk leaderboard dan market catalog,
+  lalu melakukan backfill dari `stats_json` dan `item_json`
 
 ## Local Development
 

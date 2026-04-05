@@ -36,6 +36,13 @@ const POSTGRES_SCHEMA_SQL = `
     season_id TEXT NOT NULL DEFAULT '',
     ranked BOOLEAN NOT NULL DEFAULT FALSE,
     stats_json JSONB NOT NULL,
+    ranked_points DOUBLE PRECISION NOT NULL DEFAULT 0,
+    kd_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+    extraction_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+    total_kills INTEGER NOT NULL DEFAULT 0,
+    matches_played INTEGER NOT NULL DEFAULT 0,
+    play_time INTEGER NOT NULL DEFAULT 0,
+    extracted_assets BIGINT NOT NULL DEFAULT 0,
     stats_updated_at TIMESTAMPTZ,
     fetched_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (player_id, season_id, ranked)
@@ -75,12 +82,18 @@ const POSTGRES_SCHEMA_SQL = `
     item_id TEXT NOT NULL,
     language TEXT NOT NULL,
     item_json JSONB NOT NULL,
+    name_text TEXT NOT NULL DEFAULT '',
+    search_text TEXT NOT NULL DEFAULT '',
+    sort_name_text TEXT NOT NULL DEFAULT '',
     fetched_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (item_id, language)
   );
 
   CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_item
     ON market_item_cache(language, item_id);
+
+  CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
+    ON market_item_cache(language, sort_name_text, item_id);
 
   CREATE TABLE IF NOT EXISTS market_item_summary_cache (
     item_id TEXT NOT NULL,
@@ -163,6 +176,56 @@ function parseJsonSafely(value, fallback) {
   }
 }
 
+function toSafeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizePlayerStatsColumns(stats = {}) {
+  return {
+    rankedPoints: toSafeNumber(stats?.rankedPoints, 0),
+    kdRatio: toSafeNumber(stats?.kdRatio, 0),
+    extractionRate: toSafeNumber(stats?.extractionRate, 0),
+    totalKills: Math.max(0, Math.trunc(toSafeNumber(stats?.totalKills, 0))),
+    matchesPlayed: Math.max(0, Math.trunc(toSafeNumber(stats?.matchesPlayed, 0))),
+    playTime: Math.max(0, Math.trunc(toSafeNumber(stats?.playTime, 0))),
+    extractedAssets: Math.max(0, Math.trunc(toSafeNumber(stats?.extractedAssets, 0))),
+  };
+}
+
+function normalizeMarketItemColumns(item = {}) {
+  const candidates = [
+    item?.name,
+    item?.langEn,
+    item?.displayName,
+    item?.langZhHans,
+    item?.id,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).trim());
+  const sortName = candidates[0] || '';
+  const searchText = [
+    item?.name,
+    item?.langEn,
+    item?.langZhHans,
+    item?.displayName,
+    item?.description,
+    item?.categoryName,
+    item?.category,
+    item?.type,
+    item?.id,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).trim().toLowerCase())
+    .join(' ');
+
+  return {
+    nameText: String(item?.name || ''),
+    searchText,
+    sortNameText: sortName.toLowerCase(),
+  };
+}
+
 function selectLeaderboardItemsFromRows(rows, metric, limit) {
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
@@ -204,6 +267,17 @@ function selectLeaderboardItemsFromRows(rows, metric, limit) {
     }));
 }
 
+function getLeaderboardMetricOrderExpression(metric = 'rankedPoints') {
+  const safeMetric = String(metric || 'rankedPoints');
+  if (safeMetric === 'kdRatio') return 'kd_ratio';
+  if (safeMetric === 'extractionRate') return 'extraction_rate';
+  if (safeMetric === 'totalKills') return 'total_kills';
+  if (safeMetric === 'matchesPlayed') return 'matches_played';
+  if (safeMetric === 'playTime') return 'play_time';
+  if (safeMetric === 'extractedAssets') return 'extracted_assets';
+  return 'ranked_points';
+}
+
 function ensureSqliteReady() {
   if (sqliteDb) {
     return;
@@ -230,6 +304,13 @@ function ensureSqliteReady() {
       season_id TEXT NOT NULL DEFAULT '',
       ranked INTEGER NOT NULL DEFAULT 0,
       stats_json TEXT NOT NULL,
+      ranked_points REAL NOT NULL DEFAULT 0,
+      kd_ratio REAL NOT NULL DEFAULT 0,
+      extraction_rate REAL NOT NULL DEFAULT 0,
+      total_kills INTEGER NOT NULL DEFAULT 0,
+      matches_played INTEGER NOT NULL DEFAULT 0,
+      play_time INTEGER NOT NULL DEFAULT 0,
+      extracted_assets INTEGER NOT NULL DEFAULT 0,
       stats_updated_at TEXT,
       fetched_at TEXT NOT NULL,
       PRIMARY KEY (player_id, season_id, ranked),
@@ -275,12 +356,18 @@ function ensureSqliteReady() {
       item_id TEXT NOT NULL,
       language TEXT NOT NULL,
       item_json TEXT NOT NULL,
+      name_text TEXT NOT NULL DEFAULT '',
+      search_text TEXT NOT NULL DEFAULT '',
+      sort_name_text TEXT NOT NULL DEFAULT '',
       fetched_at TEXT NOT NULL,
       PRIMARY KEY (item_id, language)
     );
 
     CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_item
       ON market_item_cache(language, item_id);
+
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
+      ON market_item_cache(language, sort_name_text, item_id);
 
     CREATE TABLE IF NOT EXISTS market_item_summary_cache (
       item_id TEXT NOT NULL,
@@ -502,6 +589,7 @@ export async function savePlayerStatsSnapshot({ player, seasonId = '', ranked = 
   await ensureReady();
   const normalizedPlayer = await upsertPlayer(player);
   const fetchedAt = getNowIso();
+  const statColumns = normalizePlayerStatsColumns(stats);
 
   if (storageMode === 'postgres') {
     await postgresClient`
@@ -510,6 +598,13 @@ export async function savePlayerStatsSnapshot({ player, seasonId = '', ranked = 
         season_id,
         ranked,
         stats_json,
+        ranked_points,
+        kd_ratio,
+        extraction_rate,
+        total_kills,
+        matches_played,
+        play_time,
+        extracted_assets,
         stats_updated_at,
         fetched_at
       )
@@ -518,11 +613,25 @@ export async function savePlayerStatsSnapshot({ player, seasonId = '', ranked = 
         ${String(seasonId || '')},
         ${Boolean(ranked)},
         ${postgresClient.json(stats || {})},
+        ${statColumns.rankedPoints},
+        ${statColumns.kdRatio},
+        ${statColumns.extractionRate},
+        ${statColumns.totalKills},
+        ${statColumns.matchesPlayed},
+        ${statColumns.playTime},
+        ${statColumns.extractedAssets},
         ${stats?.updatedAt ? String(stats.updatedAt) : null},
         ${fetchedAt}
       )
       ON CONFLICT (player_id, season_id, ranked) DO UPDATE SET
         stats_json = EXCLUDED.stats_json,
+        ranked_points = EXCLUDED.ranked_points,
+        kd_ratio = EXCLUDED.kd_ratio,
+        extraction_rate = EXCLUDED.extraction_rate,
+        total_kills = EXCLUDED.total_kills,
+        matches_played = EXCLUDED.matches_played,
+        play_time = EXCLUDED.play_time,
+        extracted_assets = EXCLUDED.extracted_assets,
         stats_updated_at = EXCLUDED.stats_updated_at,
         fetched_at = EXCLUDED.fetched_at
     `;
@@ -533,12 +642,26 @@ export async function savePlayerStatsSnapshot({ player, seasonId = '', ranked = 
         season_id,
         ranked,
         stats_json,
+        ranked_points,
+        kd_ratio,
+        extraction_rate,
+        total_kills,
+        matches_played,
+        play_time,
+        extracted_assets,
         stats_updated_at,
         fetched_at
       )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(player_id, season_id, ranked) DO UPDATE SET
         stats_json = excluded.stats_json,
+        ranked_points = excluded.ranked_points,
+        kd_ratio = excluded.kd_ratio,
+        extraction_rate = excluded.extraction_rate,
+        total_kills = excluded.total_kills,
+        matches_played = excluded.matches_played,
+        play_time = excluded.play_time,
+        extracted_assets = excluded.extracted_assets,
         stats_updated_at = excluded.stats_updated_at,
         fetched_at = excluded.fetched_at
     `).run(
@@ -546,6 +669,13 @@ export async function savePlayerStatsSnapshot({ player, seasonId = '', ranked = 
       String(seasonId || ''),
       ranked ? 1 : 0,
       JSON.stringify(stats || {}),
+      statColumns.rankedPoints,
+      statColumns.kdRatio,
+      statColumns.extractionRate,
+      statColumns.totalKills,
+      statColumns.matchesPlayed,
+      statColumns.playTime,
+      statColumns.extractedAssets,
       stats?.updatedAt ? String(stats.updatedAt) : null,
       fetchedAt,
     );
@@ -815,22 +945,32 @@ async function readMarketItemCache(itemId, language = '') {
 
 export async function writeMarketItemCache(itemId, language = '', item = {}, fetchedAt = getNowIso()) {
   await ensureReady();
+  const marketColumns = normalizeMarketItemColumns(item);
   if (storageMode === 'postgres') {
     await postgresClient`
       INSERT INTO market_item_cache (
         item_id,
         language,
         item_json,
+        name_text,
+        search_text,
+        sort_name_text,
         fetched_at
       )
       VALUES (
         ${String(itemId)},
         ${String(language || '')},
         ${postgresClient.json(item || {})},
+        ${marketColumns.nameText},
+        ${marketColumns.searchText},
+        ${marketColumns.sortNameText},
         ${fetchedAt}
       )
       ON CONFLICT (item_id, language) DO UPDATE SET
         item_json = EXCLUDED.item_json,
+        name_text = EXCLUDED.name_text,
+        search_text = EXCLUDED.search_text,
+        sort_name_text = EXCLUDED.sort_name_text,
         fetched_at = EXCLUDED.fetched_at
     `;
     return;
@@ -841,13 +981,27 @@ export async function writeMarketItemCache(itemId, language = '', item = {}, fet
       item_id,
       language,
       item_json,
+      name_text,
+      search_text,
+      sort_name_text,
       fetched_at
     )
-    VALUES (?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(item_id, language) DO UPDATE SET
       item_json = excluded.item_json,
+      name_text = excluded.name_text,
+      search_text = excluded.search_text,
+      sort_name_text = excluded.sort_name_text,
       fetched_at = excluded.fetched_at
-  `).run(String(itemId), String(language || ''), JSON.stringify(item || {}), fetchedAt);
+  `).run(
+    String(itemId),
+    String(language || ''),
+    JSON.stringify(item || {}),
+    marketColumns.nameText,
+    marketColumns.searchText,
+    marketColumns.sortNameText,
+    fetchedAt,
+  );
 }
 
 async function readMarketItemSummaryCache(itemId, language = '') {
@@ -1299,34 +1453,6 @@ export async function deleteClientPreference(clientId = '', key = '') {
   };
 }
 
-async function readAllMarketItems(language = '') {
-  if (storageMode === 'postgres') {
-    const rows = await postgresClient`
-      SELECT item_json, fetched_at
-      FROM market_item_cache
-      WHERE language = ${String(language || '')}
-      ORDER BY item_id ASC
-    `;
-
-    return rows.map((row) => ({
-      item: row.item_json || {},
-      fetchedAt: row.fetched_at,
-    }));
-  }
-
-  const rows = sqliteDb.prepare(`
-    SELECT item_json, fetched_at
-    FROM market_item_cache
-    WHERE language = ?
-    ORDER BY item_id ASC
-  `).all(String(language || ''));
-
-  return rows.map((row) => ({
-    item: parseJsonSafely(row.item_json, {}),
-    fetchedAt: row.fetched_at,
-  }));
-}
-
 export async function replaceMarketCatalog(language = '', items = [], fetchedAt = getNowIso()) {
   await ensureReady();
   const normalizedLanguage = String(language || '');
@@ -1347,6 +1473,9 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
         item_id: String(item.id),
         language: normalizedLanguage,
         item_json: item || {},
+        name_text: normalizeMarketItemColumns(item).nameText,
+        search_text: normalizeMarketItemColumns(item).searchText,
+        sort_name_text: normalizeMarketItemColumns(item).sortNameText,
         fetched_at: fetchedAt,
       }));
 
@@ -1355,13 +1484,19 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
           item_id,
           language,
           item_json,
+          name_text,
+          search_text,
+          sort_name_text,
           fetched_at
         )
-        SELECT item_id, language, item_json, fetched_at
+        SELECT item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at
         FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS rows(
           item_id text,
           language text,
           item_json jsonb,
+          name_text text,
+          search_text text,
+          sort_name_text text,
           fetched_at text
         )
       `;
@@ -1382,16 +1517,23 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
           item_id,
           language,
           item_json,
+          name_text,
+          search_text,
+          sort_name_text,
           fetched_at
         )
-        VALUES (?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
       normalizedItems.forEach((item) => {
+        const marketColumns = normalizeMarketItemColumns(item);
         statement.run(
           String(item.id),
           normalizedLanguage,
           JSON.stringify(item || {}),
+          marketColumns.nameText,
+          marketColumns.searchText,
+          marketColumns.sortNameText,
           fetchedAt,
         );
       });
@@ -1419,28 +1561,22 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
       WHERE language = ${normalizedLanguage}
         AND (
           ${!query}
-          OR LOWER(CONCAT_WS(' ',
-            COALESCE(item_json ->> 'name', ''),
-            COALESCE(item_json ->> 'langEn', ''),
-            COALESCE(item_json ->> 'langZhHans', ''),
-            COALESCE(item_json ->> 'displayName', ''),
-            COALESCE(item_json ->> 'description', ''),
-            COALESCE(item_json ->> 'categoryName', ''),
-            COALESCE(item_json ->> 'category', ''),
-            COALESCE(item_json ->> 'type', ''),
-            COALESCE(item_json ->> 'id', '')
-          )) LIKE ${searchPattern}
+          OR search_text LIKE ${searchPattern}
         )
-      ORDER BY LOWER(COALESCE(
-        item_json ->> 'name',
-        item_json ->> 'langEn',
-        item_json ->> 'displayName',
-        item_json ->> 'id',
-        ''
-      )) ASC
-      LIMIT ${safePageSize + 1}
+      ORDER BY sort_name_text ASC, item_id ASC
+      LIMIT ${safePageSize}
       OFFSET ${offset}
     `;
+
+    const totalSize = Number((await postgresClient`
+      SELECT COUNT(*)::int AS total_size
+      FROM market_item_cache
+      WHERE language = ${normalizedLanguage}
+        AND (
+          ${!query}
+          OR search_text LIKE ${searchPattern}
+        )
+    `)[0]?.total_size || 0);
 
     const latestRow = await postgresClient`
       SELECT fetched_at
@@ -1451,8 +1587,8 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
     `;
 
     const fetchedAt = latestRow[0]?.fetched_at || '';
-    const items = rows.slice(0, safePageSize).map((row) => row.item_json || {});
-    const nextPageToken = rows.length > safePageSize
+    const items = rows.map((row) => row.item_json || {});
+    const nextPageToken = offset + safePageSize < totalSize
       ? encodeMarketOffsetToken(offset + safePageSize)
       : '';
 
@@ -1461,50 +1597,48 @@ export async function getMarketCatalogSummary({ language = '', search = '', page
       nextPageToken,
       fetchedAt,
       isFresh: isFreshTimestamp(fetchedAt, MARKET_CATALOG_TTL_MS),
-      totalSize: null,
+      totalSize,
     };
   }
+  const searchPattern = `%${query}%`;
+  const rows = sqliteDb.prepare(`
+    SELECT item_json, fetched_at
+    FROM market_item_cache
+    WHERE language = ?
+      AND (? = '' OR search_text LIKE ?)
+    ORDER BY sort_name_text ASC, item_id ASC
+    LIMIT ?
+    OFFSET ?
+  `).all(normalizedLanguage, query, searchPattern, safePageSize, offset);
 
-  const rows = await readAllMarketItems(normalizedLanguage);
-  const fetchedAt = rows[0]?.fetchedAt || '';
+  const totalSize = Number(sqliteDb.prepare(`
+    SELECT COUNT(*) AS total_size
+    FROM market_item_cache
+    WHERE language = ?
+      AND (? = '' OR search_text LIKE ?)
+  `).get(normalizedLanguage, query, searchPattern)?.total_size || 0);
+
+  const latestRow = sqliteDb.prepare(`
+    SELECT fetched_at
+    FROM market_item_cache
+    WHERE language = ?
+    ORDER BY fetched_at DESC
+    LIMIT 1
+  `).get(normalizedLanguage);
+
+  const fetchedAt = latestRow?.fetched_at || '';
   const isFresh = isFreshTimestamp(fetchedAt, MARKET_CATALOG_TTL_MS);
-
-  const filtered = rows
-    .map((row) => row.item)
-    .filter(Boolean)
-    .filter((item) => {
-      if (!query) return true;
-      const haystacks = [
-        item.name,
-        item.langEn,
-        item.langZhHans,
-        item.displayName,
-        item.description,
-        item.categoryName,
-        item.category,
-        item.type,
-        item.id,
-      ]
-        .filter(Boolean)
-        .map((value) => String(value).toLowerCase());
-      return haystacks.some((value) => value.includes(query));
-    })
-    .sort((left, right) => {
-      const leftName = String(left.name || left.langEn || left.displayName || left.id || '').toLowerCase();
-      const rightName = String(right.name || right.langEn || right.displayName || right.id || '').toLowerCase();
-      return leftName.localeCompare(rightName);
-    });
-
-  const items = filtered.slice(offset, offset + safePageSize);
-  const nextOffset = offset + safePageSize;
-  const nextPageToken = nextOffset < filtered.length ? encodeMarketOffsetToken(nextOffset) : '';
+  const items = rows.map((row) => parseJsonSafely(row.item_json, {}));
+  const nextPageToken = offset + safePageSize < totalSize
+    ? encodeMarketOffsetToken(offset + safePageSize)
+    : '';
 
   return {
     items,
     nextPageToken,
     fetchedAt,
     isFresh,
-    totalSize: filtered.length,
+    totalSize,
   };
 }
 
@@ -1515,9 +1649,10 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
   const hasSeasonFilter = typeof seasonId === 'string' && seasonId !== '';
   const hasRankedFilter = typeof ranked === 'boolean';
+  const metricOrderColumn = getLeaderboardMetricOrderExpression(safeMetric);
 
   if (storageMode === 'postgres') {
-    rows = await postgresClient`
+    rows = await postgresClient.unsafe(`
       SELECT
         p.id,
         p.delta_force_id,
@@ -1532,10 +1667,15 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
       FROM player_stats_snapshots s
       INNER JOIN players p
         ON p.id = s.player_id
-      WHERE (${hasSeasonFilter} = FALSE OR s.season_id = ${String(seasonId || '')})
-        AND (${hasRankedFilter} = FALSE OR s.ranked = ${Boolean(ranked)})
-      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
-    `;
+      WHERE ($1::boolean = FALSE OR s.season_id = $2)
+        AND ($3::boolean = FALSE OR s.ranked = $4)
+      ORDER BY COALESCE(s.${metricOrderColumn}, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+    `, [
+      hasSeasonFilter,
+      String(seasonId || ''),
+      hasRankedFilter,
+      Boolean(ranked),
+    ]);
   } else {
     rows = sqliteDb.prepare(`
       SELECT
@@ -1554,13 +1694,12 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
         ON p.id = s.player_id
       WHERE (? = 0 OR s.season_id = ?)
         AND (? = 0 OR s.ranked = ?)
-      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+      ORDER BY COALESCE(s.${metricOrderColumn}, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
     `).all(
       hasSeasonFilter ? 1 : 0,
       String(seasonId || ''),
       hasRankedFilter ? 1 : 0,
       ranked ? 1 : 0,
-      `$.${safeMetric}`,
     );
   }
 
