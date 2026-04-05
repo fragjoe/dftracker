@@ -253,7 +253,7 @@ export async function renderLeaderboardPage(container) {
 
 function renderLeaderboardTableRow(entry, index, metricKey) {
   const player = entry.player || {};
-  const metricValue = formatMetricValue(metricKey, entry.metricValue, entry.stats || {});
+  const metricValue = formatMetricValue(metricKey, entry.metricValue);
   const playerQuery = player.deltaForceId || player.id || '';
   const rankValue = index + 1;
 
@@ -270,11 +270,11 @@ function renderLeaderboardTableRow(entry, index, metricKey) {
   `;
 }
 
-function formatMetricValue(metricKey, metricValue, stats) {
+function formatMetricValue(metricKey, metricValue) {
   const value = Number(metricValue || 0);
   if (metricKey === 'kdRatio') return value ? value.toFixed(2) : '0.00';
   if (metricKey === 'extractionRate') return `${(value * 100).toFixed(1)}%`;
-  if (metricKey === 'playTime') return formatPlayTime(Number(stats?.playTime || value));
+  if (metricKey === 'playTime') return formatPlayTime(value);
   if (metricKey === 'extractedAssets') return formatCompactNumber(value);
   return formatInteger(value);
 }

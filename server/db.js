@@ -21,6 +21,8 @@ let postgresClient = null;
 let readyPromise = null;
 
 const POSTGRES_SCHEMA_SQL = `
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
   CREATE TABLE IF NOT EXISTS players (
     id TEXT PRIMARY KEY,
     delta_force_id TEXT UNIQUE,
@@ -94,6 +96,9 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
     ON market_item_cache(language, sort_name_text, item_id);
+
+  CREATE INDEX IF NOT EXISTS idx_market_item_cache_search_trgm
+    ON market_item_cache USING gin(search_text gin_trgm_ops);
 
   CREATE TABLE IF NOT EXISTS market_item_summary_cache (
     item_id TEXT NOT NULL,
@@ -229,26 +234,9 @@ function normalizeMarketItemColumns(item = {}) {
 function selectLeaderboardItemsFromRows(rows, metric, limit) {
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 500));
-  const bestRowsByPlayer = new Map();
-
-  for (const row of Array.isArray(rows) ? rows : []) {
-    const stats = storageMode === 'postgres'
-      ? (row.stats_json || {})
-      : parseJsonSafely(row.stats_json, {});
-    const playerId = String(row.id || '');
-    if (!playerId || bestRowsByPlayer.has(playerId)) {
-      continue;
-    }
-
-    bestRowsByPlayer.set(playerId, {
-      row,
-      stats,
-    });
-  }
-
-  return Array.from(bestRowsByPlayer.values())
+  return (Array.isArray(rows) ? rows : [])
     .slice(0, safeLimit)
-    .map(({ row, stats }, index) => ({
+    .map((row, index) => ({
       player: {
         id: row.id,
         deltaForceId: row.delta_force_id,
@@ -257,12 +245,11 @@ function selectLeaderboardItemsFromRows(rows, metric, limit) {
         registeredAt: row.registered_at,
       },
       metric: safeMetric,
-      metricValue: Number(stats?.[safeMetric] || 0),
+      metricValue: Number(row.metric_value || 0),
       seasonId: row.season_id,
       ranked: Boolean(row.ranked),
       statsUpdatedAt: row.stats_updated_at,
       fetchedAt: row.fetched_at,
-      stats,
       rank: index + 1,
     }));
 }
@@ -366,8 +353,11 @@ function ensureSqliteReady() {
     CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_item
       ON market_item_cache(language, item_id);
 
-    CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
-      ON market_item_cache(language, sort_name_text, item_id);
+  CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
+    ON market_item_cache(language, sort_name_text, item_id);
+
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_search_text
+      ON market_item_cache(search_text);
 
     CREATE TABLE IF NOT EXISTS market_item_summary_cache (
       item_id TEXT NOT NULL,
@@ -1654,27 +1644,44 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
   if (storageMode === 'postgres') {
     rows = await postgresClient.unsafe(`
       SELECT
-        p.id,
-        p.delta_force_id,
-        p.name,
-        p.level_operations,
-        p.registered_at,
-        s.season_id,
-        s.ranked,
-        s.stats_json,
-        s.stats_updated_at,
-        s.fetched_at
-      FROM player_stats_snapshots s
-      INNER JOIN players p
-        ON p.id = s.player_id
-      WHERE ($1::boolean = FALSE OR s.season_id = $2)
-        AND ($3::boolean = FALSE OR s.ranked = $4)
-      ORDER BY COALESCE(s.${metricOrderColumn}, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+        ranked.id,
+        ranked.delta_force_id,
+        ranked.name,
+        ranked.level_operations,
+        ranked.registered_at,
+        ranked.season_id,
+        ranked.ranked,
+        ranked.stats_updated_at,
+        ranked.fetched_at,
+        ranked.metric_value
+      FROM (
+        SELECT DISTINCT ON (p.id)
+          p.id,
+          p.delta_force_id,
+          p.name,
+          p.level_operations,
+          p.registered_at,
+          p.last_seen_at,
+          s.season_id,
+          s.ranked,
+          s.stats_updated_at,
+          s.fetched_at,
+          COALESCE(s.${metricOrderColumn}, 0) AS metric_value
+        FROM player_stats_snapshots s
+        INNER JOIN players p
+          ON p.id = s.player_id
+        WHERE ($1::boolean = FALSE OR s.season_id = $2)
+          AND ($3::boolean = FALSE OR s.ranked = $4)
+        ORDER BY p.id, COALESCE(s.${metricOrderColumn}, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+      ) AS ranked
+      ORDER BY ranked.metric_value DESC, ranked.fetched_at DESC, ranked.last_seen_at DESC
+      LIMIT $5
     `, [
       hasSeasonFilter,
       String(seasonId || ''),
       hasRankedFilter,
       Boolean(ranked),
+      safeLimit,
     ]);
   } else {
     rows = sqliteDb.prepare(`
@@ -1686,9 +1693,9 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
         p.registered_at,
         s.season_id,
         s.ranked,
-        s.stats_json,
         s.stats_updated_at,
-        s.fetched_at
+        s.fetched_at,
+        COALESCE(s.${metricOrderColumn}, 0) AS metric_value
       FROM player_stats_snapshots s
       INNER JOIN players p
         ON p.id = s.player_id

@@ -295,6 +295,7 @@ Migrasi cleanup yang tersedia:
 db/migrations/2026-04-05_drop_legacy_leaderboard_rank_snapshots.sql
 db/migrations/2026-04-05_align_postgres_schema.sql
 db/migrations/2026-04-05_add_hybrid_stats_and_market_columns.sql
+db/migrations/2026-04-05_add_market_search_trgm_index.sql
 ```
 
 Ringkasannya:
@@ -309,6 +310,8 @@ Ringkasannya:
 - `2026-04-05_add_hybrid_stats_and_market_columns.sql`
   menambahkan kolom hybrid untuk leaderboard dan market catalog,
   lalu melakukan backfill dari `stats_json` dan `item_json`
+- `2026-04-05_add_market_search_trgm_index.sql`
+  menambahkan extension `pg_trgm` dan index GIN untuk mempercepat search market berbasis substring di Postgres
 
 ## Local Development
 

@@ -57,6 +57,10 @@ function normalizePlayerStatsColumns(stats = {}) {
 
 async function ensurePostgresSchema() {
   await sql`
+    CREATE EXTENSION IF NOT EXISTS pg_trgm
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS players (
       id TEXT PRIMARY KEY,
       delta_force_id TEXT UNIQUE,
@@ -138,6 +142,11 @@ async function ensurePostgresSchema() {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
       ON market_item_cache(language, sort_name_text, item_id)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_market_item_cache_search_trgm
+      ON market_item_cache USING gin(search_text gin_trgm_ops)
   `;
 
   await sql`
