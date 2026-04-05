@@ -95,11 +95,6 @@ export function isAppErrorKind(err, kind) {
     return classifyAppError(err) === kind;
 }
 
-export function isRetryableAppError(err) {
-    const kind = classifyAppError(err);
-    return kind === 'not_found' || kind === 'network' || kind === 'pending';
-}
-
 /**
  * Escapes HTML special characters to prevent XSS.
  * @param {string} str - Raw string from external source.

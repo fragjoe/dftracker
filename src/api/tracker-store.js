@@ -31,30 +31,6 @@ function canUseMockClientFallback() {
   return !canUseTrackerNetwork();
 }
 
-async function postTrackerData(path, payload) {
-  if (!canUseTrackerNetwork()) {
-    return null;
-  }
-
-  try {
-    const response = await fetch(getTrackerUrl(path), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    return await response.json();
-  } catch (error) {
-    return null;
-  }
-}
-
 function getRangeStartIso(range = '30d') {
   const now = Date.now();
   const offsetMs = range === '24h'
@@ -63,41 +39,6 @@ function getRangeStartIso(range = '30d') {
       ? 7 * 24 * 60 * 60 * 1000
       : 30 * 24 * 60 * 60 * 1000;
   return new Date(now - offsetMs).toISOString();
-}
-
-export function persistTrackedPlayerProfile(player) {
-  if (!player?.id) return Promise.resolve(null);
-  return postTrackerData('/players/sync-profile', { player })
-    .catch(() => null);
-}
-
-export function persistTrackedPlayerStats({ player, seasonId = '', ranked = false, stats }) {
-  if (!player?.id || !stats) return Promise.resolve(null);
-  return postTrackerData('/players/sync-stats', {
-    player,
-    seasonId,
-    ranked,
-    stats,
-  })
-    .catch(() => null);
-}
-
-export function persistTrackedPlayerWealth({ player, stash }) {
-  if (!player?.id || !stash) return Promise.resolve(null);
-  return postTrackerData('/players/sync-wealth', {
-    player,
-    stash,
-  })
-    .catch(() => null);
-}
-
-export function persistTrackedPlayerWealthHistory({ player, history }) {
-  if (!player?.id || !Array.isArray(history)) return Promise.resolve(null);
-  return postTrackerData('/players/sync-wealth-history', {
-    player,
-    history,
-  })
-    .catch(() => null);
 }
 
 export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = null, limit = 50 } = {}) {

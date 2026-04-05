@@ -62,17 +62,6 @@ const POSTGRES_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
     ON player_stats_snapshots(season_id, ranked);
 
-  CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
-    filter_key TEXT NOT NULL,
-    week_key TEXT NOT NULL,
-    ranks_json JSONB NOT NULL,
-    saved_at TEXT NOT NULL,
-    PRIMARY KEY (filter_key, week_key)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
-    ON leaderboard_rank_snapshots(filter_key);
-
   CREATE TABLE IF NOT EXISTS seasons_cache (
     id TEXT PRIMARY KEY,
     number INTEGER,
@@ -127,18 +116,6 @@ const POSTGRES_SCHEMA_SQL = `
 
 function getNowIso() {
   return new Date().toISOString();
-}
-
-function getFiveMinuteBucketKey(dateInput = new Date()) {
-  const sourceDate = dateInput instanceof Date ? dateInput : new Date(dateInput);
-  const roundedDate = new Date(sourceDate);
-  roundedDate.setUTCSeconds(0, 0);
-  roundedDate.setUTCMinutes(Math.floor(roundedDate.getUTCMinutes() / 5) * 5);
-  return roundedDate.toISOString().slice(0, 16);
-}
-
-function buildLeaderboardFilterKey({ metric = 'rankedPoints', seasonId = '', ranked = false } = {}) {
-  return `${String(metric || 'rankedPoints')}:${String(seasonId || 'all')}:${ranked ? 'ranked' : 'all'}`;
 }
 
 function decodeMarketOffsetToken(token = '') {
@@ -284,17 +261,6 @@ function ensureSqliteReady() {
 
     CREATE INDEX IF NOT EXISTS idx_player_stats_ranked_season
       ON player_stats_snapshots(season_id, ranked);
-
-    CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
-      filter_key TEXT NOT NULL,
-      week_key TEXT NOT NULL,
-      ranks_json TEXT NOT NULL,
-      saved_at TEXT NOT NULL,
-      PRIMARY KEY (filter_key, week_key)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
-      ON leaderboard_rank_snapshots(filter_key);
 
     CREATE TABLE IF NOT EXISTS seasons_cache (
       id TEXT PRIMARY KEY,
@@ -710,158 +676,6 @@ export async function savePlayerWealthHistorySnapshot({ player, history }) {
     playerId: normalizedPlayer.id,
     pointsCount: normalizedHistory.length,
     fetchedAt,
-  };
-}
-
-async function readLeaderboardRankSnapshots(filterKey) {
-  if (storageMode === 'postgres') {
-    const rows = await postgresClient`
-      SELECT week_key, ranks_json, saved_at
-      FROM leaderboard_rank_snapshots
-      WHERE filter_key = ${filterKey}
-      ORDER BY week_key ASC
-    `;
-
-    return rows.map((row) => ({
-      weekKey: row.week_key,
-      ranks: row.ranks_json || {},
-      savedAt: row.saved_at,
-    }));
-  }
-
-  const rows = sqliteDb.prepare(`
-    SELECT week_key, ranks_json, saved_at
-    FROM leaderboard_rank_snapshots
-    WHERE filter_key = ?
-    ORDER BY week_key ASC
-  `).all(filterKey);
-
-  return rows.map((row) => ({
-    weekKey: row.week_key,
-    ranks: parseJsonSafely(row.ranks_json, {}),
-    savedAt: row.saved_at,
-  }));
-}
-
-async function writeLeaderboardRankSnapshot(filterKey, weekKey, ranks, savedAt) {
-  if (storageMode === 'postgres') {
-    await postgresClient`
-      INSERT INTO leaderboard_rank_snapshots (
-        filter_key,
-        week_key,
-        ranks_json,
-        saved_at
-      )
-      VALUES (
-        ${filterKey},
-        ${weekKey},
-        ${postgresClient.json(ranks || {})},
-        ${savedAt}
-      )
-      ON CONFLICT (filter_key, week_key) DO UPDATE SET
-        ranks_json = EXCLUDED.ranks_json,
-        saved_at = EXCLUDED.saved_at
-    `;
-    return;
-  }
-
-  sqliteDb.prepare(`
-    INSERT INTO leaderboard_rank_snapshots (
-      filter_key,
-      week_key,
-      ranks_json,
-      saved_at
-    )
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(filter_key, week_key) DO UPDATE SET
-      ranks_json = excluded.ranks_json,
-      saved_at = excluded.saved_at
-  `).run(filterKey, weekKey, JSON.stringify(ranks || {}), savedAt);
-}
-
-async function pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys) {
-  if (!Array.isArray(keepWeekKeys) || !keepWeekKeys.length) {
-    return;
-  }
-
-  if (storageMode === 'postgres') {
-    await postgresClient`
-      DELETE FROM leaderboard_rank_snapshots
-      WHERE filter_key = ${filterKey}
-        AND NOT (week_key = ANY(${postgresClient.array(keepWeekKeys)}))
-    `;
-    return;
-  }
-
-  const placeholders = keepWeekKeys.map(() => '?').join(', ');
-  sqliteDb.prepare(`
-    DELETE FROM leaderboard_rank_snapshots
-    WHERE filter_key = ?
-      AND week_key NOT IN (${placeholders})
-  `).run(filterKey, ...keepWeekKeys);
-}
-
-async function annotateLeaderboardRankChanges(items, {
-  metric = 'rankedPoints',
-  seasonId = '',
-  ranked = false,
-  persistSnapshot = true,
-} = {}) {
-  const filterKey = buildLeaderboardFilterKey({ metric, seasonId, ranked });
-  const snapshots = await readLeaderboardRankSnapshots(filterKey);
-  const now = new Date();
-  const currentBucketKey = getFiveMinuteBucketKey(now);
-  const previousBucketKey = getFiveMinuteBucketKey(new Date(now.getTime() - 5 * 60 * 1000));
-  const previousSnapshot = snapshots.find((entry) => entry.weekKey === previousBucketKey) || null;
-  const currentRanks = {};
-
-  const annotatedItems = items.map((entry, index) => {
-    const rank = index + 1;
-    const playerId = String(entry?.player?.id || '');
-    if (playerId) {
-      currentRanks[playerId] = rank;
-    }
-
-    const previousRank = Number(previousSnapshot?.ranks?.[playerId] || 0);
-    let rankChange = { state: 'same', delta: 0 };
-
-    if (!previousSnapshot) {
-      rankChange = { state: 'same', delta: 0 };
-    } else if (!previousRank) {
-      rankChange = { state: 'new', delta: 0 };
-    } else if (previousRank > rank) {
-      rankChange = { state: 'up', delta: previousRank - rank };
-    } else if (previousRank < rank) {
-      rankChange = { state: 'down', delta: rank - previousRank };
-    }
-
-    return {
-      ...entry,
-      rank,
-      rankChange,
-    };
-  });
-
-  const savedAt = now.toISOString();
-  if (persistSnapshot) {
-    await writeLeaderboardRankSnapshot(filterKey, currentBucketKey, currentRanks, savedAt);
-
-    const keepWeekKeys = Array.from(new Set(
-      [...snapshots.map((entry) => entry.weekKey), currentBucketKey].sort().slice(-288),
-    ));
-    await pruneLeaderboardRankSnapshots(filterKey, keepWeekKeys);
-  }
-
-  return {
-    items: annotatedItems,
-    baseline: {
-      filterKey,
-      period: '5m',
-      currentBucketKey,
-      previousBucketKey,
-      savedAt,
-      hasPreviousSnapshot: Boolean(previousSnapshot),
-    },
   };
 }
 
@@ -1761,79 +1575,6 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
     metric,
     seasonId: hasSeasonFilter ? String(seasonId || '') : null,
     ranked: hasRankedFilter ? Boolean(ranked) : null,
-  };
-}
-
-export async function refreshLeaderboardBaseline({
-  metric = 'rankedPoints',
-  seasonId = null,
-  ranked = null,
-  limit = 200,
-} = {}) {
-  await ensureReady();
-  let rows;
-  const safeMetric = String(metric || 'rankedPoints');
-  const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
-  const hasSeasonFilter = typeof seasonId === 'string' && seasonId !== '';
-  const hasRankedFilter = typeof ranked === 'boolean';
-
-  if (storageMode === 'postgres') {
-    rows = await postgresClient`
-      SELECT
-        p.id,
-        p.delta_force_id,
-        p.name,
-        p.level_operations,
-        p.registered_at,
-        s.season_id,
-        s.ranked,
-        s.stats_json,
-        s.stats_updated_at,
-        s.fetched_at
-      FROM player_stats_snapshots s
-      INNER JOIN players p
-        ON p.id = s.player_id
-      WHERE (${hasSeasonFilter} = FALSE OR s.season_id = ${String(seasonId || '')})
-        AND (${hasRankedFilter} = FALSE OR s.ranked = ${Boolean(ranked)})
-      ORDER BY COALESCE((s.stats_json ->> ${safeMetric})::double precision, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
-    `;
-  } else {
-    rows = sqliteDb.prepare(`
-      SELECT
-        p.id,
-        p.delta_force_id,
-        p.name,
-        p.level_operations,
-        p.registered_at,
-        s.season_id,
-        s.ranked,
-        s.stats_json,
-        s.stats_updated_at,
-        s.fetched_at
-      FROM player_stats_snapshots s
-      INNER JOIN players p
-        ON p.id = s.player_id
-      WHERE (? = 0 OR s.season_id = ?)
-        AND (? = 0 OR s.ranked = ?)
-      ORDER BY COALESCE(CAST(json_extract(s.stats_json, ?) AS REAL), 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
-    `).all(
-      hasSeasonFilter ? 1 : 0,
-      String(seasonId || ''),
-      hasRankedFilter ? 1 : 0,
-      ranked ? 1 : 0,
-      `$.${safeMetric}`,
-    );
-  }
-
-  const items = selectLeaderboardItemsFromRows(rows, metric, safeLimit);
-
-  return {
-    ok: true,
-    totalSize: items.length,
-    metric,
-    seasonId: hasSeasonFilter ? String(seasonId || '') : null,
-    ranked: hasRankedFilter ? Boolean(ranked) : null,
-    items,
   };
 }
 

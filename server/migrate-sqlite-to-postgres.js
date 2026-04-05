@@ -93,21 +93,6 @@ async function ensurePostgresSchema() {
   `;
 
   await sql`
-    CREATE TABLE IF NOT EXISTS leaderboard_rank_snapshots (
-      filter_key TEXT NOT NULL,
-      week_key TEXT NOT NULL,
-      ranks_json JSONB NOT NULL,
-      saved_at TEXT NOT NULL,
-      PRIMARY KEY (filter_key, week_key)
-    )
-  `;
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_leaderboard_rank_snapshots_filter_key
-      ON leaderboard_rank_snapshots(filter_key)
-  `;
-
-  await sql`
     CREATE TABLE IF NOT EXISTS seasons_cache (
       id TEXT PRIMARY KEY,
       number INTEGER,

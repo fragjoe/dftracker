@@ -11,7 +11,6 @@ import {
   getCachedMarketSeriesSummary,
   findTrackedPlayer,
   getLeaderboard,
-  refreshLeaderboardBaseline,
   getTrackerSummary,
   savePlayerStatsSnapshot,
   savePlayerWealthHistorySnapshot,
@@ -110,12 +109,6 @@ function readAuthBearerToken(request) {
   const header = request.headers?.authorization || '';
   const match = String(header).match(/^Bearer\s+(.+)$/i);
   return match ? match[1].trim() : '';
-}
-
-function readInternalCronToken(request) {
-  const headerToken = request.headers?.['x-internal-cron-token'];
-  const bearerToken = readAuthBearerToken(request);
-  return String(headerToken || bearerToken || '').trim();
 }
 
 function parseCookies(request) {
@@ -607,32 +600,6 @@ export async function handleTrackerRequest(request, response) {
       return;
     }
 
-    if (request.method === 'POST' && pathname === '/tracker-api/leaderboard/refresh') {
-      const requiredToken = process.env.INTERNAL_CRON_TOKEN || '';
-      if (requiredToken) {
-        const requestToken = readInternalCronToken(request);
-        if (!requestToken || requestToken !== requiredToken) {
-          sendJson(response, 401, {
-            ok: false,
-            error: 'Unauthorized',
-          });
-          return;
-        }
-      }
-
-      const body = await readJsonBody(request);
-      const payload = await refreshLeaderboardBaseline({
-        metric: body.metric || url.searchParams.get('metric') || 'rankedPoints',
-        seasonId: body.seasonId || url.searchParams.get('seasonId') || null,
-        ranked: parseOptionalBooleanParam(
-          typeof body.ranked === 'undefined' ? url.searchParams.get('ranked') : body.ranked,
-        ),
-        limit: Number(body.limit || url.searchParams.get('limit') || 200),
-      });
-      sendJson(response, 200, payload, { 'Cache-Control': 'no-store' });
-      return;
-    }
-
     if (request.method === 'GET' && pathname === '/tracker-api/seasons') {
       const language = url.searchParams.get('language') || 'LANGUAGE_EN';
       const cached = await getCachedSeasonsSummary();
@@ -920,34 +887,6 @@ export async function handleTrackerRequest(request, response) {
         }
         throw error;
       }
-    }
-
-    if (request.method === 'POST' && pathname === '/tracker-api/players/sync-profile') {
-      const body = await readJsonBody(request);
-      const player = await upsertPlayer(body.player);
-      sendJson(response, 200, { ok: true, player }, { 'Cache-Control': 'no-store' });
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/tracker-api/players/sync-stats') {
-      const body = await readJsonBody(request);
-      const result = await savePlayerStatsSnapshot(body);
-      sendJson(response, 200, { ok: true, ...result }, { 'Cache-Control': 'no-store' });
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/tracker-api/players/sync-wealth') {
-      const body = await readJsonBody(request);
-      const result = await savePlayerWealthSnapshot(body);
-      sendJson(response, 200, { ok: true, ...result }, { 'Cache-Control': 'no-store' });
-      return;
-    }
-
-    if (request.method === 'POST' && pathname === '/tracker-api/players/sync-wealth-history') {
-      const body = await readJsonBody(request);
-      const result = await savePlayerWealthHistorySnapshot(body);
-      sendJson(response, 200, { ok: true, ...result }, { 'Cache-Control': 'no-store' });
-      return;
     }
 
     sendJson(response, 404, {
