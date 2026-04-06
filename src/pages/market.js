@@ -316,11 +316,12 @@ export function renderMarketPage(container) {
     } catch (err) {
       if (requestId !== latestLoadRequestId) return;
       console.error('Market load error:', err);
+      const safeMessage = escapeHTML(err?.message || t('app.errors.system'));
       resultsEl.innerHTML = `
         <div class="empty-state" style="grid-column: 1/-1">
           <div class="empty-icon">⚠️</div>
           <div class="empty-text">${t('market.loadErrorTitle')}</div>
-          <div class="empty-hint">${err.message}</div>
+          <div class="empty-hint">${safeMessage}</div>
         </div>`;
       if (searchMeta) {
         searchMeta.textContent = t('market.loadErrorTitle');

@@ -1,6 +1,7 @@
 import { CLIENT_PREFERENCE_KEYS, setClientPreference } from '../api/preferences-store.js';
 import { fetchTrackedLeaderboard } from '../api/tracker-store.js';
 import { getCurrentLanguage, t } from '../i18n.js';
+import { escapeHTML } from '../utils/security.js';
 
 const DEFAULT_METRIC = 'rankedPoints';
 const LEADERBOARD_LIMIT = 100;
@@ -254,18 +255,23 @@ export async function renderLeaderboardPage(container) {
 function renderLeaderboardTableRow(entry, index, metricKey) {
   const player = entry.player || {};
   const metricValue = formatMetricValue(metricKey, entry.metricValue);
-  const playerQuery = player.deltaForceId || player.id || '';
+  const playerQuery = String(player.deltaForceId || player.id || '');
   const rankValue = index + 1;
+  const playerName = escapeHTML(player.name || player.deltaForceId || 'Unknown');
+  const playerId = escapeHTML(player.deltaForceId || player.id || '-');
+  const playerLevel = escapeHTML(String(player.levelOperations ?? '?'));
+  const safePlayerQuery = escapeHTML(playerQuery);
+  const safeMetricValue = escapeHTML(metricValue);
 
   return `
-    <tr class="leaderboard-table-row" data-player-query="${playerQuery}">
+    <tr class="leaderboard-table-row" data-player-query="${safePlayerQuery}">
       <td class="leaderboard-cell-rank leaderboard-cell-center">${entry.rank || rankValue}</td>
       <td>
-        <div class="leaderboard-cell-player-name">${player.name || player.deltaForceId || 'Unknown'}</div>
-        <div class="leaderboard-cell-player-id text-mono">${player.deltaForceId || player.id || '-'}</div>
+        <div class="leaderboard-cell-player-name">${playerName}</div>
+        <div class="leaderboard-cell-player-id text-mono">${playerId}</div>
       </td>
-      <td>Lv.${player.levelOperations ?? '?'}</td>
-      <td class="leaderboard-cell-metric leaderboard-cell-center text-mono">${metricValue}</td>
+      <td>Lv.${playerLevel}</td>
+      <td class="leaderboard-cell-metric leaderboard-cell-center text-mono">${safeMetricValue}</td>
     </tr>
   `;
 }
