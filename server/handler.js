@@ -163,7 +163,7 @@ function getPublicCacheHeaders(scope = '', { stale = true } = {}) {
     playerWealth: `public, s-maxage=${stale ? 300 : 1200}, stale-while-revalidate=3600`,
     playerWealthHistory: `public, s-maxage=${stale ? 900 : 10800}, stale-while-revalidate=43200`,
     seasons: 'public, s-maxage=3600, stale-while-revalidate=86400',
-    leaderboard: 'public, s-maxage=300, stale-while-revalidate=1800',
+    leaderboard: 'public, s-maxage=60, stale-while-revalidate=300',
     marketCatalog: 'public, s-maxage=1800, stale-while-revalidate=21600',
     marketItem: 'public, s-maxage=1800, stale-while-revalidate=21600',
     marketItemSummary: 'public, s-maxage=300, stale-while-revalidate=3600',
