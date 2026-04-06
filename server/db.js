@@ -79,7 +79,7 @@ const POSTGRES_SCHEMA_SQL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
-    ON seasons_cache(language, active, number);
+    ON seasons_cache(active, number);
 
   CREATE TABLE IF NOT EXISTS market_item_cache (
     item_id TEXT NOT NULL,
