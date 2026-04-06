@@ -3,6 +3,7 @@
  * History API-based SPA router with page transitions
  */
 import './styles/index.css';
+import { inject } from '@vercel/analytics';
 import {
   AlertTriangle,
   Archive,
@@ -53,6 +54,9 @@ import { CLIENT_PREFERENCE_KEYS, getClientPreference, setClientPreference } from
 import { clearActivePlayerContext, getActivePlayerProfileSummary, renderPlayerPage, renderWealthPage } from './pages/player.js';
 import { getCurrentLanguage, getLanguageOptions, initializeLanguage, setCurrentLanguage, t } from './i18n.js';
 import { escapeHTML } from './utils/security.js';
+
+// Initialize Vercel Web Analytics
+inject();
 
 const STORAGE_NOTICE_KEY = CLIENT_PREFERENCE_KEYS.storageNoticeDismissed;
 let activeRenderRequestId = 0;
