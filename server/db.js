@@ -1753,20 +1753,21 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
   const hasSeasonFilter = typeof seasonId === 'string' && seasonId !== '';
   const hasRankedFilter = typeof ranked === 'boolean';
   const metricOrderColumn = getLeaderboardMetricOrderExpression(safeMetric);
+  const latestTimestampExpression = 'COALESCE(s.stats_updated_at, s.fetched_at)';
 
   if (storageMode === 'postgres') {
     rows = await postgresClient.unsafe(`
       SELECT
-        ranked.id,
-        ranked.delta_force_id,
-        ranked.name,
-        ranked.level_operations,
-        ranked.registered_at,
-        ranked.season_id,
-        ranked.ranked,
-        ranked.stats_updated_at,
-        ranked.fetched_at,
-        ranked.metric_value
+        latest.id,
+        latest.delta_force_id,
+        latest.name,
+        latest.level_operations,
+        latest.registered_at,
+        latest.season_id,
+        latest.ranked,
+        latest.stats_updated_at,
+        latest.fetched_at,
+        latest.metric_value
       FROM (
         SELECT DISTINCT ON (p.id)
           p.id,
@@ -1785,9 +1786,17 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
           ON p.id = s.player_id
         WHERE ($1::boolean = FALSE OR s.season_id = $2)
           AND ($3::boolean = FALSE OR s.ranked = $4)
-        ORDER BY p.id, COALESCE(s.${metricOrderColumn}, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
-      ) AS ranked
-      ORDER BY ranked.metric_value DESC, ranked.fetched_at DESC, ranked.last_seen_at DESC
+        ORDER BY
+          p.id,
+          COALESCE(s.stats_updated_at, s.fetched_at) DESC NULLS LAST,
+          s.fetched_at DESC,
+          COALESCE(s.${metricOrderColumn}, 0) DESC,
+          p.last_seen_at DESC
+      ) AS latest
+      ORDER BY
+        latest.metric_value DESC,
+        COALESCE(latest.stats_updated_at, latest.fetched_at) DESC NULLS LAST,
+        latest.fetched_at DESC
       LIMIT $5
     `, [
       hasSeasonFilter,
@@ -1799,27 +1808,55 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
   } else {
     rows = sqliteDb.prepare(`
       SELECT
-        p.id,
-        p.delta_force_id,
-        p.name,
-        p.level_operations,
-        p.registered_at,
-        s.season_id,
-        s.ranked,
-        s.stats_updated_at,
-        s.fetched_at,
-        COALESCE(s.${metricOrderColumn}, 0) AS metric_value
-      FROM player_stats_snapshots s
-      INNER JOIN players p
-        ON p.id = s.player_id
-      WHERE (? = 0 OR s.season_id = ?)
-        AND (? = 0 OR s.ranked = ?)
-      ORDER BY COALESCE(s.${metricOrderColumn}, 0) DESC, s.fetched_at DESC, p.last_seen_at DESC
+        ranked.id,
+        ranked.delta_force_id,
+        ranked.name,
+        ranked.level_operations,
+        ranked.registered_at,
+        ranked.season_id,
+        ranked.ranked,
+        ranked.stats_updated_at,
+        ranked.fetched_at,
+        ranked.metric_value
+      FROM (
+        SELECT
+          p.id,
+          p.delta_force_id,
+          p.name,
+          p.level_operations,
+          p.registered_at,
+          p.last_seen_at,
+          s.season_id,
+          s.ranked,
+          s.stats_updated_at,
+          s.fetched_at,
+          COALESCE(s.${metricOrderColumn}, 0) AS metric_value,
+          ROW_NUMBER() OVER (
+            PARTITION BY p.id
+            ORDER BY
+              COALESCE(s.stats_updated_at, s.fetched_at) DESC,
+              s.fetched_at DESC,
+              COALESCE(s.${metricOrderColumn}, 0) DESC,
+              p.last_seen_at DESC
+          ) AS row_num
+        FROM player_stats_snapshots s
+        INNER JOIN players p
+          ON p.id = s.player_id
+        WHERE (? = 0 OR s.season_id = ?)
+          AND (? = 0 OR s.ranked = ?)
+      ) AS ranked
+      WHERE ranked.row_num = 1
+      ORDER BY
+        ranked.metric_value DESC,
+        COALESCE(ranked.stats_updated_at, ranked.fetched_at) DESC,
+        ranked.fetched_at DESC
+      LIMIT ?
     `).all(
       hasSeasonFilter ? 1 : 0,
       String(seasonId || ''),
       hasRankedFilter ? 1 : 0,
       ranked ? 1 : 0,
+      safeLimit,
     );
   }
 
