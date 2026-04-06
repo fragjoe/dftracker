@@ -300,12 +300,13 @@ function formatInteger(value) {
 
 function formatPlayTime(seconds) {
   const totalSeconds = Math.max(0, Number(seconds || 0));
+  if (!totalSeconds) return '-';
   const totalHours = Math.floor(totalSeconds / 3600);
-  if (totalHours >= 24) {
-    const days = Math.floor(totalHours / 24);
-    return `${days}d`;
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (totalHours > 0) {
+    return `${totalHours}h ${minutes} m`;
   }
-  return `${totalHours}h`;
+  return `${minutes} m`;
 }
 
 function formatDateTime(value) {
