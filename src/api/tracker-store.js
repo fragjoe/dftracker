@@ -41,7 +41,7 @@ function getRangeStartIso(range = '30d') {
   return new Date(now - offsetMs).toISOString();
 }
 
-export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = null, limit = 50 } = {}) {
+export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonId = '', ranked = true, limit = 50 } = {}) {
   if (!canUseTrackerNetwork()) {
     return {
       items: [],

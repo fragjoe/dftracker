@@ -1766,7 +1766,8 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
   const requestedSeasonId = typeof seasonId === 'string' ? seasonId : '';
   const defaultSeasonId = requestedSeasonId || getPreferredSeasonId((await getCachedSeasonsSummary('LANGUAGE_EN')).seasons);
   const hasSeasonFilter = Boolean(defaultSeasonId);
-  const hasRankedFilter = typeof ranked === 'boolean';
+  const defaultRanked = typeof ranked === 'boolean' ? ranked : true;
+  const hasRankedFilter = true;
   const metricOrderColumn = getLeaderboardMetricOrderExpression(safeMetric);
 
   if (storageMode === 'postgres') {
@@ -1816,7 +1817,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
       hasSeasonFilter,
       String(defaultSeasonId || ''),
       hasRankedFilter,
-      Boolean(ranked),
+      defaultRanked,
       safeLimit,
     ]);
   } else {
@@ -1869,7 +1870,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
       hasSeasonFilter ? 1 : 0,
       String(defaultSeasonId || ''),
       hasRankedFilter ? 1 : 0,
-      ranked ? 1 : 0,
+      defaultRanked ? 1 : 0,
       safeLimit,
     );
   }
@@ -1881,7 +1882,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
     totalSize: items.length,
     metric,
     seasonId: hasSeasonFilter ? String(defaultSeasonId || '') : null,
-    ranked: hasRankedFilter ? Boolean(ranked) : null,
+    ranked: defaultRanked,
   };
 }
 

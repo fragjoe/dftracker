@@ -39,7 +39,7 @@ describe('leaderboard latest snapshot selection', () => {
     await savePlayerStatsSnapshot({
       player,
       seasonId: 'season-older',
-      ranked: false,
+      ranked: true,
       stats: {
         rankedPoints: 8122,
         updatedAt: '2026-04-05T10:56:00.000Z',
@@ -49,7 +49,7 @@ describe('leaderboard latest snapshot selection', () => {
     await savePlayerStatsSnapshot({
       player,
       seasonId: 'season-newer',
-      ranked: false,
+      ranked: true,
       stats: {
         rankedPoints: 8114,
         updatedAt: '2026-04-06T10:56:00.000Z',
@@ -86,7 +86,7 @@ describe('leaderboard latest snapshot selection', () => {
     await savePlayerStatsSnapshot({
       player,
       seasonId: '',
-      ranked: false,
+      ranked: true,
       stats: {
         rankedPoints: 14986,
         updatedAt: '2026-04-05T10:56:00.000Z',
@@ -96,7 +96,7 @@ describe('leaderboard latest snapshot selection', () => {
     await savePlayerStatsSnapshot({
       player,
       seasonId: 'season-active',
-      ranked: false,
+      ranked: true,
       stats: {
         rankedPoints: 14960,
         updatedAt: '2026-04-06T10:56:00.000Z',
@@ -112,5 +112,61 @@ describe('leaderboard latest snapshot selection', () => {
     expect(leaderboard.items).toHaveLength(1);
     expect(leaderboard.items[0].metricValue).toBe(14960);
     expect(leaderboard.items[0].seasonId).toBe('season-active');
+  });
+
+  it('defaults leaderboard queries to ranked-only snapshots for every metric', async () => {
+    const { getLeaderboard, savePlayerStatsSnapshot, writeCachedSeasons } = await loadDbModuleWithTempSqlite();
+
+    const player = {
+      id: 'player-3',
+      deltaForceId: '36008256037550045602',
+      name: 'Foeyii',
+      levelOperations: 60,
+      registeredAt: '2024-12-07T14:40:58.000Z',
+    };
+
+    await writeCachedSeasons([
+      { id: 'season-active', number: 8, name: 'Morphosis', active: true },
+    ]);
+
+    await savePlayerStatsSnapshot({
+      player,
+      seasonId: 'season-active',
+      ranked: false,
+      stats: {
+        rankedPoints: 7418,
+        playTime: 500000,
+        updatedAt: '2026-04-06T07:10:00.000Z',
+      },
+    });
+
+    await savePlayerStatsSnapshot({
+      player,
+      seasonId: 'season-active',
+      ranked: true,
+      stats: {
+        rankedPoints: 7374,
+        playTime: 400000,
+        updatedAt: '2026-04-06T07:14:09.206Z',
+      },
+    });
+
+    const rankedPointsLeaderboard = await getLeaderboard({
+      metric: 'rankedPoints',
+      limit: 10,
+    });
+
+    const playTimeLeaderboard = await getLeaderboard({
+      metric: 'playTime',
+      limit: 10,
+    });
+
+    expect(rankedPointsLeaderboard.ranked).toBe(true);
+    expect(rankedPointsLeaderboard.items[0].metricValue).toBe(7374);
+    expect(rankedPointsLeaderboard.items[0].ranked).toBe(true);
+
+    expect(playTimeLeaderboard.ranked).toBe(true);
+    expect(playTimeLeaderboard.items[0].metricValue).toBe(400000);
+    expect(playTimeLeaderboard.items[0].ranked).toBe(true);
   });
 });
