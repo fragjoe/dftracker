@@ -354,7 +354,38 @@ async function getTrackedPlayer(query = {}) {
   };
 }
 
-async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } = {}) {
+async function fetchTrackedPlayerStatsVariant({ player, seasonId = '', ranked = false } = {}) {
+  const response = await runSingleFlight('player-stats', [player.id, seasonId, ranked], async () => {
+    const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationStats', {
+      playerId: player.id,
+      ...(seasonId ? { seasonId } : {}),
+      ...(ranked ? { ranked: true } : {}),
+    });
+    if (upstream?.stats) {
+      await savePlayerStatsSnapshot({
+        player,
+        seasonId,
+        ranked,
+        stats: upstream.stats,
+      });
+    }
+    return upstream;
+  });
+
+  if (!response?.stats) {
+    throw new Error('No stats found');
+  }
+
+  return {
+    stats: response.stats,
+    fetchedAt: new Date().toISOString(),
+    updatedAt: response.stats.updatedAt || '',
+    source: 'upstream',
+    stale: false,
+  };
+}
+
+async function ensureTrackedPlayerStatsVariant({ player, seasonId = '', ranked = false, background = false } = {}) {
   const cached = await getCachedPlayerStatsSummary({ playerId: player.id, seasonId, ranked });
   if (cached.isFresh && cached.stats) {
     return {
@@ -366,35 +397,47 @@ async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } =
     };
   }
 
-  try {
-    const response = await runSingleFlight('player-stats', [player.id, seasonId, ranked], async () => {
-      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationStats', {
-        playerId: player.id,
-        ...(seasonId ? { seasonId } : {}),
-        ...(ranked ? { ranked: true } : {}),
-      });
-      if (upstream?.stats) {
-        await savePlayerStatsSnapshot({
-          player,
-          seasonId,
-          ranked,
-          stats: upstream.stats,
-        });
-      }
-      return upstream;
+  const task = fetchTrackedPlayerStatsVariant({ player, seasonId, ranked });
+  if (background) {
+    void task.catch(() => null);
+    return null;
+  }
+
+  return task;
+}
+
+async function getTrackedPlayerStats({ player, seasonId = '', ranked = false } = {}) {
+  const cached = await getCachedPlayerStatsSummary({ playerId: player.id, seasonId, ranked });
+  const companionRanked = !ranked;
+
+  if (cached.isFresh && cached.stats) {
+    await ensureTrackedPlayerStatsVariant({
+      player,
+      seasonId,
+      ranked: companionRanked,
+      background: true,
     });
 
-    if (response?.stats) {
-      return {
-        stats: response.stats,
-        fetchedAt: new Date().toISOString(),
-        updatedAt: response.stats.updatedAt || '',
-        source: 'upstream',
-        stale: false,
-      };
+    return {
+      stats: cached.stats,
+      fetchedAt: cached.fetchedAt,
+      updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
+      source: 'database',
+      stale: false,
+    };
+  }
+
+  try {
+    const [primaryResult] = await Promise.allSettled([
+      fetchTrackedPlayerStatsVariant({ player, seasonId, ranked }),
+      ensureTrackedPlayerStatsVariant({ player, seasonId, ranked: companionRanked }),
+    ]);
+
+    if (primaryResult.status === 'fulfilled') {
+      return primaryResult.value;
     }
 
-    throw new Error('No stats found');
+    throw primaryResult.reason;
   } catch (error) {
     if (cached.stats) {
       return {
@@ -612,19 +655,6 @@ export async function handleTrackerRequest(request, response) {
       const playerId = url.searchParams.get('playerId') || url.searchParams.get('id') || '';
       const seasonId = url.searchParams.get('seasonId') || '';
       const ranked = parseBooleanParam(url.searchParams.get('ranked'));
-      const cached = await getCachedPlayerStatsSummary({ playerId, seasonId, ranked });
-
-      if (cached.isFresh && cached.stats) {
-        sendJson(response, 200, {
-          stats: cached.stats,
-          fetchedAt: cached.fetchedAt,
-          updatedAt: cached.statsUpdatedAt || cached.stats?.updatedAt || '',
-          source: 'database',
-          stale: false,
-        }, getPublicCacheHeaders('playerStats', { stale: false }));
-        return;
-      }
-
       const player = await getTrackedPlayer({ id: playerId });
       const payload = await getTrackedPlayerStats({
         player: player.player,
