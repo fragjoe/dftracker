@@ -70,6 +70,7 @@ const POSTGRES_SCHEMA_SQL = `
 
   CREATE TABLE IF NOT EXISTS seasons_cache (
     id TEXT PRIMARY KEY,
+    language TEXT NOT NULL DEFAULT 'LANGUAGE_EN',
     number INTEGER,
     name TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT FALSE,
@@ -78,7 +79,7 @@ const POSTGRES_SCHEMA_SQL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
-    ON seasons_cache(active, number);
+    ON seasons_cache(language, active, number);
 
   CREATE TABLE IF NOT EXISTS market_item_cache (
     item_id TEXT NOT NULL,
@@ -329,6 +330,7 @@ function ensureSqliteReady() {
 
     CREATE TABLE IF NOT EXISTS seasons_cache (
       id TEXT PRIMARY KEY,
+      language TEXT NOT NULL DEFAULT 'LANGUAGE_EN',
       number INTEGER,
       name TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 0,
@@ -337,7 +339,7 @@ function ensureSqliteReady() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
-      ON seasons_cache(active, number);
+      ON seasons_cache(language, active, number);
 
     CREATE TABLE IF NOT EXISTS market_item_cache (
       item_id TEXT NOT NULL,
@@ -394,6 +396,7 @@ function ensureSqliteColumn(tableName, columnName, definition) {
 }
 
 function ensureSqliteCompatibilitySchema() {
+  ensureSqliteColumn('seasons_cache', 'language', "TEXT NOT NULL DEFAULT 'LANGUAGE_EN'");
   ensureSqliteColumn('player_stats_snapshots', 'ranked_points', 'REAL NOT NULL DEFAULT 0');
   ensureSqliteColumn('player_stats_snapshots', 'kd_ratio', 'REAL NOT NULL DEFAULT 0');
   ensureSqliteColumn('player_stats_snapshots', 'extraction_rate', 'REAL NOT NULL DEFAULT 0');
@@ -407,6 +410,10 @@ function ensureSqliteCompatibilitySchema() {
   ensureSqliteColumn('market_item_cache', 'sort_name_text', "TEXT NOT NULL DEFAULT ''");
 
   sqliteDb.exec(`
+    UPDATE seasons_cache
+    SET language = 'LANGUAGE_EN'
+    WHERE COALESCE(TRIM(language), '') = '';
+
     CREATE INDEX IF NOT EXISTS idx_market_item_cache_language_sort_name
       ON market_item_cache(language, sort_name_text, item_id);
 
@@ -460,6 +467,17 @@ async function ensurePostgresReady() {
     max: POSTGRES_POOL_MAX,
   });
   await postgresClient.unsafe(POSTGRES_SCHEMA_SQL);
+  await postgresClient.unsafe(`
+    ALTER TABLE seasons_cache
+      ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT 'LANGUAGE_EN';
+
+    UPDATE seasons_cache
+    SET language = 'LANGUAGE_EN'
+    WHERE COALESCE(BTRIM(language), '') = '';
+
+    CREATE INDEX IF NOT EXISTS idx_seasons_cache_active_number
+      ON seasons_cache(language, active, number);
+  `);
 }
 
 async function ensureReady() {
@@ -474,6 +492,24 @@ async function ensureReady() {
   }
 
   await readyPromise;
+}
+
+function getSeasonCacheRowId(language = 'LANGUAGE_EN', seasonId = '') {
+  return `${String(language || 'LANGUAGE_EN')}:${String(seasonId || '')}`;
+}
+
+function getSeasonPublicId(rowId = '', rawSeason = {}) {
+  if (rawSeason?.id) {
+    return String(rawSeason.id);
+  }
+
+  const value = String(rowId || '');
+  const separatorIndex = value.indexOf(':');
+  if (separatorIndex === -1) {
+    return value;
+  }
+
+  return value.slice(separatorIndex + 1);
 }
 
 async function upsertPlayerSqlite(player) {
@@ -857,17 +893,20 @@ export async function savePlayerWealthHistorySnapshot({ player, history }) {
   };
 }
 
-async function readCachedSeasons() {
+async function readCachedSeasons(language = 'LANGUAGE_EN') {
+  const normalizedLanguage = String(language || 'LANGUAGE_EN');
   if (storageMode === 'postgres') {
     const rows = await postgresClient`
-      SELECT id, number, name, active, raw_json, fetched_at
+      SELECT id, language, number, name, active, raw_json, fetched_at
       FROM seasons_cache
+      WHERE language = ${normalizedLanguage}
       ORDER BY number DESC, name ASC
     `;
 
     return rows.map((row) => ({
       ...row.raw_json,
-      id: row.id,
+      id: getSeasonPublicId(row.id, row.raw_json),
+      language: row.language || normalizedLanguage,
       number: Number(row.number || 0),
       name: row.name,
       active: Boolean(row.active),
@@ -876,14 +915,16 @@ async function readCachedSeasons() {
   }
 
   const rows = sqliteDb.prepare(`
-    SELECT id, number, name, active, raw_json, fetched_at
+    SELECT id, language, number, name, active, raw_json, fetched_at
     FROM seasons_cache
+    WHERE language = ?
     ORDER BY number DESC, name ASC
-  `).all();
+  `).all(normalizedLanguage);
 
   return rows.map((row) => ({
     ...parseJsonSafely(row.raw_json, {}),
-    id: row.id,
+    id: getSeasonPublicId(row.id, parseJsonSafely(row.raw_json, {})),
+    language: row.language || normalizedLanguage,
     number: Number(row.number || 0),
     name: row.name,
     active: Boolean(row.active),
@@ -891,14 +932,16 @@ async function readCachedSeasons() {
   }));
 }
 
-export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso()) {
+export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso(), language = 'LANGUAGE_EN') {
+  const normalizedLanguage = String(language || 'LANGUAGE_EN');
   if (storageMode === 'postgres') {
     await postgresClient.begin(async (tx) => {
-      await tx`DELETE FROM seasons_cache`;
+      await tx`DELETE FROM seasons_cache WHERE language = ${normalizedLanguage}`;
       for (const season of seasons) {
         await tx`
           INSERT INTO seasons_cache (
             id,
+            language,
             number,
             name,
             active,
@@ -906,7 +949,8 @@ export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso()) 
             fetched_at
           )
           VALUES (
-            ${String(season.id || '')},
+            ${getSeasonCacheRowId(normalizedLanguage, season.id || '')},
+            ${normalizedLanguage},
             ${Number(season.number || 0)},
             ${String(season.name || '')},
             ${Boolean(season.active)},
@@ -921,22 +965,24 @@ export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso()) 
 
   sqliteDb.exec('BEGIN');
   try {
-    sqliteDb.prepare('DELETE FROM seasons_cache').run();
+    sqliteDb.prepare('DELETE FROM seasons_cache WHERE language = ?').run(normalizedLanguage);
     const statement = sqliteDb.prepare(`
       INSERT INTO seasons_cache (
         id,
+        language,
         number,
         name,
         active,
         raw_json,
         fetched_at
       )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     seasons.forEach((season) => {
       statement.run(
-        String(season.id || ''),
+        getSeasonCacheRowId(normalizedLanguage, season.id || ''),
+        normalizedLanguage,
         Number(season.number || 0),
         String(season.name || ''),
         season.active ? 1 : 0,
@@ -951,9 +997,9 @@ export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso()) 
   }
 }
 
-export async function getCachedSeasonsSummary() {
+export async function getCachedSeasonsSummary(language = 'LANGUAGE_EN') {
   await ensureReady();
-  const seasons = await readCachedSeasons();
+  const seasons = await readCachedSeasons(language);
   const fetchedAt = seasons[0]?.fetchedAt || '';
   const isFresh = fetchedAt
     ? (Date.now() - new Date(fetchedAt).getTime()) < SEASON_CACHE_TTL_MS

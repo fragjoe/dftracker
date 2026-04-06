@@ -48,6 +48,16 @@ export function sendJson(response, statusCode, payload, extraHeaders = {}) {
   response.end(JSON.stringify(payload));
 }
 
+function mergeVaryHeader(existingValue = '', nextValue = '') {
+  const values = new Set(
+    [existingValue, nextValue]
+      .flatMap((value) => String(value || '').split(','))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  return values.size ? [...values].join(', ') : '';
+}
+
 export function readJsonBody(request) {
   if (request.body && typeof request.body === 'object') {
     return Promise.resolve(request.body);
@@ -544,7 +554,11 @@ export async function handleTrackerRequest(request, response) {
       const preferences = await getClientPreferences(clientContext.clientId, keys);
       sendJson(response, 200, {
         preferences,
-      }, clientContext.responseHeaders);
+      }, {
+        ...clientContext.responseHeaders,
+        'Cache-Control': 'no-store, private',
+        Vary: mergeVaryHeader(response.getHeader('Vary'), 'Cookie'),
+      });
       return;
     }
 
@@ -560,7 +574,11 @@ export async function handleTrackerRequest(request, response) {
         sendJson(response, 200, {
           ok: true,
           ...result,
-        }, clientContext.responseHeaders);
+        }, {
+          ...clientContext.responseHeaders,
+          'Cache-Control': 'no-store, private',
+          Vary: mergeVaryHeader(response.getHeader('Vary'), 'Cookie'),
+        });
         return;
       }
 
@@ -572,7 +590,11 @@ export async function handleTrackerRequest(request, response) {
       sendJson(response, 200, {
         ok: true,
         ...result,
-      }, clientContext.responseHeaders);
+      }, {
+        ...clientContext.responseHeaders,
+        'Cache-Control': 'no-store, private',
+        Vary: mergeVaryHeader(response.getHeader('Vary'), 'Cookie'),
+      });
       return;
     }
 
@@ -674,7 +696,7 @@ export async function handleTrackerRequest(request, response) {
 
     if (request.method === 'GET' && pathname === '/tracker-api/seasons') {
       const language = url.searchParams.get('language') || 'LANGUAGE_EN';
-      const cached = await getCachedSeasonsSummary();
+      const cached = await getCachedSeasonsSummary(language);
       const shouldRefresh = !cached.seasons.length || !cached.isFresh;
 
       if (!shouldRefresh) {
@@ -696,7 +718,7 @@ export async function handleTrackerRequest(request, response) {
 
         const fetchedAt = new Date().toISOString();
         const seasons = Array.isArray(upstream?.seasons) ? upstream.seasons : [];
-        await writeCachedSeasons(seasons, fetchedAt);
+        await writeCachedSeasons(seasons, fetchedAt, language);
 
         sendJson(response, 200, {
           seasons,
