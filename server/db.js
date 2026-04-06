@@ -933,6 +933,7 @@ async function readCachedSeasons(language = 'LANGUAGE_EN') {
 }
 
 export async function writeCachedSeasons(seasons = [], fetchedAt = getNowIso(), language = 'LANGUAGE_EN') {
+  await ensureReady();
   const normalizedLanguage = String(language || 'LANGUAGE_EN');
   if (storageMode === 'postgres') {
     await postgresClient.begin(async (tx) => {
@@ -1010,6 +1011,18 @@ export async function getCachedSeasonsSummary(language = 'LANGUAGE_EN') {
     fetchedAt,
     isFresh,
   };
+}
+
+function getPreferredSeasonId(seasons = []) {
+  const safeSeasons = Array.isArray(seasons) ? seasons : [];
+  const activeSeason = safeSeasons.find((season) => season?.active);
+  if (activeSeason?.id) {
+    return String(activeSeason.id);
+  }
+  if (safeSeasons[0]?.id) {
+    return String(safeSeasons[0].id);
+  }
+  return '';
 }
 
 async function readMarketItemCache(itemId, language = '') {
@@ -1750,10 +1763,11 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
   let rows;
   const safeMetric = String(metric || 'rankedPoints');
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-  const hasSeasonFilter = typeof seasonId === 'string' && seasonId !== '';
+  const requestedSeasonId = typeof seasonId === 'string' ? seasonId : '';
+  const defaultSeasonId = requestedSeasonId || getPreferredSeasonId((await getCachedSeasonsSummary('LANGUAGE_EN')).seasons);
+  const hasSeasonFilter = Boolean(defaultSeasonId);
   const hasRankedFilter = typeof ranked === 'boolean';
   const metricOrderColumn = getLeaderboardMetricOrderExpression(safeMetric);
-  const latestTimestampExpression = 'COALESCE(s.stats_updated_at, s.fetched_at)';
 
   if (storageMode === 'postgres') {
     rows = await postgresClient.unsafe(`
@@ -1800,7 +1814,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
       LIMIT $5
     `, [
       hasSeasonFilter,
-      String(seasonId || ''),
+      String(defaultSeasonId || ''),
       hasRankedFilter,
       Boolean(ranked),
       safeLimit,
@@ -1853,7 +1867,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
       LIMIT ?
     `).all(
       hasSeasonFilter ? 1 : 0,
-      String(seasonId || ''),
+      String(defaultSeasonId || ''),
       hasRankedFilter ? 1 : 0,
       ranked ? 1 : 0,
       safeLimit,
@@ -1866,7 +1880,7 @@ export async function getLeaderboard({ metric = 'rankedPoints', seasonId = null,
     items,
     totalSize: items.length,
     metric,
-    seasonId: hasSeasonFilter ? String(seasonId || '') : null,
+    seasonId: hasSeasonFilter ? String(defaultSeasonId || '') : null,
     ranked: hasRankedFilter ? Boolean(ranked) : null,
   };
 }
