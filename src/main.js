@@ -3,6 +3,7 @@
  * History API-based SPA router with page transitions
  */
 import './styles/index.css';
+import { injectSpeedInsights } from '@vercel/speed-insights';
 import {
   AlertTriangle,
   Archive,
@@ -654,6 +655,9 @@ document.addEventListener('keydown', (e) => {
 
 // Initial render
 window.addEventListener('DOMContentLoaded', async () => {
+  // Initialize Vercel Speed Insights
+  injectSpeedInsights();
+
   await initializeLanguage();
   updateStaticLanguageUI();
   updateStorageNoticeVisibility();
