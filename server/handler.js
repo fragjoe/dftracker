@@ -511,23 +511,26 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
       const days = range === '24h' ? 1 : range === '7d' ? 7 : 30;
       const startTime = new Date(now.getTime() - (days * 24 * 60 * 60 * 1000));
 
-      // Fetch all pages to get complete data
-      const allHistory = [];
-      let nextPageToken = '';
+      // Fetch first page
+      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', {
+        playerId: player.id,
+        pageSize: 100,
+        startTime: startTime.toISOString(),
+      });
+      let allHistory = upstream?.historicalStashValues || upstream?.stashes || upstream?.historicalStashValue || upstream?.series || [];
+      allHistory = Array.isArray(allHistory) ? allHistory : [];
 
-      do {
-        const body = {
+      // If 30d and has more pages, fetch page 2 to get latest data
+      if (range === '30d' && upstream?.nextPageToken && allHistory.length < (upstream?.totalSize || 200)) {
+        const upstream2 = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', {
           playerId: player.id,
           pageSize: 100,
           startTime: startTime.toISOString(),
-        };
-        if (nextPageToken) body.pageToken = nextPageToken;
-
-        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', body);
-        const history = upstream?.historicalStashValues || upstream?.stashes || upstream?.historicalStashValue || upstream?.series || [];
-        allHistory.push(...(Array.isArray(history) ? history : []));
-        nextPageToken = upstream?.nextPageToken || '';
-      } while (nextPageToken && allHistory.length < (upstream?.totalSize || allHistory.length + 100));
+          pageToken: upstream.nextPageToken,
+        });
+        const page2 = upstream2?.stashes || upstream2?.historicalStashValues || [];
+        allHistory = [...allHistory, ...(Array.isArray(page2) ? page2 : [])];
+      }
 
       return allHistory;
     });
