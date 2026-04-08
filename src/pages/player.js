@@ -197,7 +197,7 @@ function renderWealthRangeTabs(selectedRange = '30d') {
 function getPlayerViewState(playerId, activeSeasonId = '') {
   return playerViewStateCache.get(playerId) || {
     seasonId: activeSeasonId || '',
-    ranked: false,
+    ranked: true,
   };
 }
 
@@ -1351,7 +1351,7 @@ function renderPlayerProfile(container, player, requestId) {
     detachStatsDropdownListeners = null;
   };
 
-  updateSeasonAvailability({ ranked: false, prioritizeSeasonId: activeSeasonId || '' });
+  updateSeasonAvailability({ ranked: initialRanked, prioritizeSeasonId: activeSeasonId || '' });
   updatePlayerResourceStatus();
   fetchUpdatedStats({ allowAutoFallback: true });
 
