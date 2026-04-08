@@ -504,7 +504,7 @@ async function getTrackedPlayerWealth({ player } = {}) {
 }
 
 async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
-  // Always try upstream with range-specific request for fresh data
+  // Always fetch from upstream with range-specific query for fresh data
   try {
     const response = await runSingleFlight('player-wealth-history', [player.id, range], async () => {
       const now = new Date();
@@ -684,18 +684,6 @@ export async function handleTrackerRequest(request, response) {
     if (request.method === 'GET' && pathname === '/tracker-api/player/wealth-history') {
       const playerId = url.searchParams.get('playerId') || url.searchParams.get('id') || '';
       const range = url.searchParams.get('range') || '30d';
-      const cached = await getCachedPlayerWealthHistorySummary(playerId);
-
-      if (cached.isFresh && Array.isArray(cached.history) && cached.history.length) {
-        sendJson(response, 200, {
-          history: filterHistoryByRange(cached.history, range),
-          fetchedAt: cached.fetchedAt,
-          updatedAt: cached.latestEntryAt || '',
-          source: 'database',
-          stale: false,
-        }, getPublicCacheHeaders('playerWealthHistory', { stale: false }));
-        return;
-      }
 
       const player = await getTrackedPlayer({ id: playerId });
       const payload = await getTrackedPlayerWealthHistory({
