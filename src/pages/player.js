@@ -1207,7 +1207,7 @@ function renderPlayerProfile(container, player, requestId) {
         });
         renderResolvedStats(res, seasonId, availabilityMap, availabilityCacheKey);
       } else {
-        throw new Error("NOT_FOUND: Data stat kosong untuk filter ini");
+        throw new Error("No stats available for this filter");
       }
     } catch (err) {
       if (isStalePlayerRequest(requestId)) return;

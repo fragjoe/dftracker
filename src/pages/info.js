@@ -33,15 +33,15 @@ export function renderPrivacyPage(container) {
         },
         {
           title: '2. Data yang Kami Simpan',
-          body: 'Saat Anda memakai DFtracker, sistem dapat menyimpan profil player yang pernah dicari, snapshot statistik, snapshot stash, riwayat stash, dan cache market agar pemuatan berikutnya lebih cepat. Data ini disimpan sebagai data aplikasi, bukan sebagai akses ke akun pribadi Anda.',
+          body: 'Saat Anda memakai DFtracker, sistem dapat menyimpan profil player yang pernah dicari, data statistik, data stash, riwayat kekayaan, dan data market agar pemuatan berikutnya lebih cepat. Data ini disimpan sebagai data aplikasi, bukan sebagai akses ke akun pribadi Anda.',
         },
         {
           title: '3. Data yang Tetap Tersimpan di Browser',
-          body: 'Recent Searches tetap disimpan di browser Anda agar daftar pencarian terakhir terasa cepat dan personal untuk perangkat itu. Beberapa preferensi ringan seperti bahasa atau player terakhir dapat disinkronkan melalui penyimpanan aplikasi agar tetap konsisten saat halaman dimuat ulang.',
+          body: 'Riwayat Pencarian tetap disimpan di browser Anda agar daftar pencarian terakhir terasa cepat dan personal untuk perangkat itu. Beberapa preferensi ringan seperti bahasa atau player terakhir tersimpan agar tetap konsisten saat halaman dimuat ulang.',
         },
         {
           title: '4. Cookie dan Identifier Teknis',
-          body: 'DFtracker dapat memakai cookie atau identifier teknis sederhana untuk mengaitkan preferensi antarmuka dengan browser Anda. Identifier ini dipakai untuk fungsi aplikasi seperti bahasa, player aktif, atau preferensi tampilan, dan tidak digunakan untuk iklan perilaku.',
+          body: 'DFtracker dapat memakai cookie sederhana untuk mengaitkan preferensi antarmuka dengan browser Anda. Cookie ini dipakai untuk fungsi aplikasi seperti bahasa, player aktif, atau preferensi tampilan, dan tidak digunakan untuk iklan perilaku.',
         },
         {
           title: '5. Sumber Data Pihak Ketiga',
@@ -49,11 +49,11 @@ export function renderPrivacyPage(container) {
         },
         {
           title: '6. Batasan Pelacakan',
-          body: 'Kami tidak menjual data pencarian Anda, tidak membangun profil iklan personal, dan tidak memakai data aplikasi untuk pelacakan lintas situs. Data yang disimpan terutama dipakai untuk cache, stabilitas, dan kenyamanan penggunaan.',
+          body: 'Kami tidak menjual data pencarian Anda, tidak membangun profil iklan personal, dan tidak memakai data aplikasi untuk pelacakan lintas situs. Data yang disimpan terutama dipakai untuk stabilitas dan kenyamanan penggunaan.',
         },
         {
           title: '7. Penghapusan dan Tanggung Jawab Pengguna',
-          body: 'Karena sebagian data tetap tersimpan di browser, Anda dapat menghapus Recent Searches atau data situs dari browser kapan saja. Jika memakai perangkat bersama, kami menyarankan membersihkan data situs setelah selesai memakai aplikasi.',
+          body: 'Karena sebagian data tetap tersimpan di browser, Anda dapat menghapus Riwayat Pencarian atau data situs dari browser kapan saja. Jika memakai perangkat bersama, kami menyarankan membersihkan data situs setelah selesai memakai aplikasi.',
         },
       ],
     },
@@ -66,15 +66,15 @@ export function renderPrivacyPage(container) {
         },
         {
           title: '2. Data We Store',
-          body: 'When you use DFtracker, the app may store searched player profiles, stat snapshots, stash snapshots, stash history, and market cache so future loads are faster and more stable. This is application data, not private account access.',
+          body: 'When you use DFtracker, the app may store searched player profiles, stat data, stash data, wealth history, and market data so future loads are faster and more stable. This is application data, not private account access.',
         },
         {
           title: '3. Data Kept in Your Browser',
-          body: 'Recent Searches remains stored in your browser so your most recent lookups stay fast and local to your device. Some lightweight preferences such as language or last active player may also be synchronized through app storage for a more consistent experience.',
+          body: 'Recent Searches remains stored in your browser so your most recent lookups stay fast and local to your device. Some lightweight preferences such as language or last active player are saved through app storage for a more consistent experience.',
         },
         {
-          title: '4. Cookies and Technical Identifiers',
-          body: 'DFtracker may use a simple cookie or technical identifier to associate interface preferences with your browser. This is used for app functionality such as language, active player state, or display preferences, not for behavioral advertising.',
+          title: '4. Cookies',
+          body: 'DFtracker may use simple cookies to associate interface preferences with your browser. This is used for app functionality such as language, active player state, or display preferences, not for behavioral advertising.',
         },
         {
           title: '5. Third-Party Data Sources',
@@ -82,7 +82,7 @@ export function renderPrivacyPage(container) {
         },
         {
           title: '6. Tracking Limits',
-          body: 'We do not sell your search activity, build advertising profiles from your usage, or use DFtracker data for cross-site ad tracking. Stored data is primarily used for caching, stability, and usability.',
+          body: 'We do not sell your search activity, build advertising profiles from your usage, or use DFtracker data for cross-site ad tracking. Stored data is primarily used for stability and usability.',
         },
         {
           title: '7. Deletion and User Responsibility',
@@ -99,15 +99,15 @@ export function renderPrivacyPage(container) {
         },
         {
           title: '2. 我们存储的数据',
-          body: '当你使用 DFtracker 时，系统可能会保存已查询玩家的资料、统计快照、仓库快照、仓库历史以及市场缓存，以便后续加载更快、更稳定。这些是应用数据，并不代表对你的私人账号访问。',
+          body: '当你使用 DFtracker 时，系统可能会保存已查询玩家的资料、统计数据、仓库数据、财富历史以及市场数据，以便后续加载更快、更稳定。这些是应用数据，并不代表对你的私人账号访问。',
         },
         {
           title: '3. 保留在浏览器中的数据',
-          body: 'Recent Searches 仍会保存在你的浏览器中，使最近查询更快且仅属于当前设备。某些轻量级偏好设置，例如语言或最近活跃玩家，也可能通过应用存储进行同步，以获得更一致的体验。',
+          body: '最近搜索仍会保存在你的浏览器中，使最近查询更快且仅属于当前设备。某些轻量级偏好设置，例如语言或最近活跃玩家，也会通过应用存储进行保存，以获得更一致的体验。',
         },
         {
-          title: '4. Cookie 与技术标识',
-          body: 'DFtracker 可能使用简单的 cookie 或技术标识，将界面偏好与你的浏览器关联。这仅用于语言、当前玩家或显示偏好等应用功能，不用于行为广告。',
+          title: '4. Cookie',
+          body: 'DFtracker 可能使用简单的 cookie，将界面偏好与你的浏览器关联。这仅用于语言、当前玩家或显示偏好等应用功能，不用于行为广告。',
         },
         {
           title: '5. 第三方数据来源',
@@ -161,8 +161,8 @@ export function renderTermsPage(container) {
           body: 'DFtracker adalah proyek komunitas independen. Nama game, aset visual, dan elemen yang terkait dengan Delta Force tetap merupakan milik pemegang hak masing-masing. Aplikasi ini tidak dimaksudkan untuk menggantikan layanan resmi.',
         },
         {
-          title: '5. Cache, Snapshot, dan Leaderboard',
-          body: 'Sebagian tampilan DFtracker bergantung pada cache, snapshot statistik, atau hasil sinkronisasi data sebelumnya. Leaderboard internal juga dibangun dari data player yang pernah tersimpan di aplikasi, sehingga urutan yang tampil tidak selalu merepresentasikan seluruh populasi player Delta Force.',
+          title: '5. Data Tersimpan dan Leaderboard',
+          body: 'Sebagian tampilan DFtracker bergantung pada data yang tersimpan atau hasil data sebelumnya. Leaderboard juga dibangun dari data player yang pernah tersimpan di aplikasi, sehingga urutan yang tampil tidak selalu merepresentasikan seluruh populasi player Delta Force.',
         },
         {
           title: '6. Perubahan Layanan',
@@ -170,7 +170,7 @@ export function renderTermsPage(container) {
         },
         {
           title: '7. Penyangkalan Jaminan',
-          body: 'DFtracker disediakan sebagaimana adanya. Sepanjang diizinkan hukum yang berlaku, kami tidak memberikan jaminan bahwa layanan akan selalu bebas gangguan, bebas error, atau selalu sesuai untuk kebutuhan tertentu.',
+          body: 'DFtracker disediakan sebagaimana adanya. Sepanjang diizinkan hukum yang berlaku, kami tidak memberikan jaminan bahwa layanan akan selalu bebas gangguan, selalu berjalan sempurna, atau selalu sesuai untuk kebutuhan tertentu.',
         },
       ],
     },
@@ -194,8 +194,8 @@ export function renderTermsPage(container) {
           body: 'DFtracker is an independent community project. The game name, visual assets, and Delta Force related elements remain the property of their respective rights holders. This app is not intended to replace official services.',
         },
         {
-          title: '5. Cache, Snapshots, and Leaderboards',
-          body: 'Parts of DFtracker rely on cache, stored stat snapshots, or previously synchronized data. The internal leaderboard is also built from player data that has been stored by the app, so displayed rankings do not necessarily represent the entire Delta Force player population.',
+          title: '5. Stored Data and Leaderboards',
+          body: 'Parts of DFtracker rely on saved data or previously loaded data. The leaderboard is also built from player data that has been stored by the app, so displayed rankings do not necessarily represent the entire Delta Force player population.',
         },
         {
           title: '6. Service Changes',
@@ -227,8 +227,8 @@ export function renderTermsPage(container) {
           body: 'DFtracker 是一个独立的社区项目。游戏名称、视觉素材以及与 Delta Force 相关的元素仍归各自权利方所有。本应用并不旨在替代官方服务。',
         },
         {
-          title: '5. 缓存、快照与排行榜',
-          body: 'DFtracker 的部分展示依赖缓存、已存储的统计快照或先前同步的数据。内部排行榜同样基于应用中已经保存过的玩家数据构建，因此显示的排名不一定代表全部 Delta Force 玩家。',
+          title: '5. 已存储数据与排行榜',
+          body: 'DFtracker 的部分展示依赖已保存的数据或先前加载的数据。排行榜同样基于应用中已经保存过的玩家数据构建，因此显示的排名不一定代表全部 Delta Force 玩家。',
         },
         {
           title: '6. 服务变更',
@@ -236,7 +236,7 @@ export function renderTermsPage(container) {
         },
         {
           title: '7. 免责声明',
-          body: 'DFtracker 按“现状”提供。在适用法律允许的范围内，我们不保证服务始终不中断、无错误，或适用于任何特定目的。',
+          body: 'DFtracker 按”现状”提供。在适用法律允许的范围内，我们不保证服务始终不中断、始终正常运作，或适用于任何特定目的。',
         },
       ],
     },

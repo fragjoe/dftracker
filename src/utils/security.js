@@ -9,6 +9,7 @@ const NOT_FOUND_PATTERNS = [
     '404',
     'not_found',
     'not found',
+    'no stats available',
     'data tidak ditemukan',
     'data could not be found',
     '未找到',
@@ -17,9 +18,11 @@ const NOT_FOUND_PATTERNS = [
 const NETWORK_PATTERNS = [
     'failed to fetch',
     'network',
-    'unable to reach the service',
-    'gagal terhubung ke layanan',
-    '无法连接到服务',
+    'unable to reach',
+    'unable to connect',
+    'gagal terhubung',
+    '无法连接到',
+    '游戏服务器',
 ];
 
 const MAINTENANCE_PATTERNS = [
@@ -27,6 +30,7 @@ const MAINTENANCE_PATTERNS = [
     'api error (502)',
     'api error (503)',
     'api error (504)',
+    'game server error',
     'internal error',
     'service unavailable',
     'bad gateway',

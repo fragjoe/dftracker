@@ -37,7 +37,7 @@ async function apiPost(endpoint, body = {}) {
 
         if (!res.ok) {
             const errorText = await res.text();
-            throw new Error(`API Error (${res.status}): ${errorText}`);
+            throw new Error(`Game server error (${res.status})`);
         }
 
         const payload = await res.json();

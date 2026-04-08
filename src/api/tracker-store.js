@@ -64,7 +64,7 @@ export async function fetchTrackedLeaderboard({ metric = 'rankedPoints', seasonI
   try {
     const response = await fetch(getTrackerUrl(`/leaderboard?${params.toString()}`));
     if (!response.ok) {
-      throw new Error(`Leaderboard request failed (${response.status})`);
+      throw new Error(`Unable to load leaderboard (${response.status})`);
     }
 
     const payload = await response.json();
@@ -103,7 +103,7 @@ export async function fetchTrackedPlayer({ id = '', deltaForceId = '', name = ''
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Player resolve request failed');
+    throw new Error('Unable to find player');
   }
 
   const payload = await getPlayer({ id, deltaForceId, name });
@@ -133,7 +133,7 @@ export async function fetchTrackedPlayerStats({ playerId = '', seasonId = '', ra
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Player stats request failed');
+    throw new Error('Unable to load player stats');
   }
 
   return getPlayerOperationStats(playerId, { seasonId, ranked });
@@ -153,7 +153,7 @@ export async function fetchTrackedPlayerWealth({ playerId = '' } = {}) {
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Player wealth request failed');
+    throw new Error('Unable to load player wealth data');
   }
 
   try {
@@ -177,7 +177,7 @@ export async function fetchTrackedPlayerWealthHistory({ playerId = '', range = '
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Player wealth history request failed');
+    throw new Error('Unable to load wealth history');
   }
 
   const payload = await getPlayerOperationHistoricalStashValue(playerId, {
@@ -235,7 +235,7 @@ export async function fetchTrackedSeasons({ pageSize = 50, pageToken = '', langu
 export async function fetchTrackedMarketItems({ filter = '', search = '', pageToken = '', pageSize = 10, language = '' } = {}) {
   try {
     if (!canUseTrackerNetwork()) {
-      throw new Error('Tracker network unavailable');
+      throw new Error('Unable to connect to game server');
     }
     const params = new URLSearchParams({
       filter,
@@ -256,7 +256,7 @@ export async function fetchTrackedMarketItems({ filter = '', search = '', pageTo
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Market items request failed');
+    throw new Error('Unable to load market items');
   }
 
   return listAuctionItems({ filter, pageToken, pageSize, language });
@@ -265,7 +265,7 @@ export async function fetchTrackedMarketItems({ filter = '', search = '', pageTo
 export async function fetchTrackedMarketItem({ itemId = '', language = '' } = {}) {
   try {
     if (!canUseTrackerNetwork()) {
-      throw new Error('Tracker network unavailable');
+      throw new Error('Unable to connect to game server');
     }
     const params = new URLSearchParams({ itemId });
     if (language) {
@@ -281,7 +281,7 @@ export async function fetchTrackedMarketItem({ itemId = '', language = '' } = {}
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Market item request failed');
+    throw new Error('Unable to load market item');
   }
 
   return getAuctionItem(itemId, language);
@@ -290,7 +290,7 @@ export async function fetchTrackedMarketItem({ itemId = '', language = '' } = {}
 export async function fetchTrackedMarketItemSummary({ itemId = '', language = '' } = {}) {
   try {
     if (!canUseTrackerNetwork()) {
-      throw new Error('Tracker network unavailable');
+      throw new Error('Unable to connect to game server');
     }
     const params = new URLSearchParams({ itemId });
     if (language) {
@@ -306,7 +306,7 @@ export async function fetchTrackedMarketItemSummary({ itemId = '', language = ''
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Market item summary request failed');
+    throw new Error('Unable to load market item summary');
   }
 
   const now = new Date();
@@ -337,7 +337,7 @@ export async function fetchTrackedMarketItemSummary({ itemId = '', language = ''
 export async function fetchTrackedMarketItemSeries({ itemId = '', days = 1, language = '' } = {}) {
   try {
     if (!canUseTrackerNetwork()) {
-      throw new Error('Tracker network unavailable');
+      throw new Error('Unable to connect to game server');
     }
     const params = new URLSearchParams({
       itemId,
@@ -356,7 +356,7 @@ export async function fetchTrackedMarketItemSeries({ itemId = '', days = 1, lang
   }
 
   if (!canUseMockClientFallback()) {
-    throw new Error('Market item series request failed');
+    throw new Error('Unable to load price history');
   }
 
   const now = new Date();
