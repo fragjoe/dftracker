@@ -504,17 +504,7 @@ async function getTrackedPlayerWealth({ player } = {}) {
 }
 
 async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
-  const cached = await getCachedPlayerWealthHistorySummary(player.id);
-  if (cached.isFresh && Array.isArray(cached.history) && cached.history.length) {
-    return {
-      history: filterHistoryByRange(cached.history, range),
-      fetchedAt: cached.fetchedAt,
-      updatedAt: cached.latestEntryAt || '',
-      source: 'database',
-      stale: false,
-    };
-  }
-
+  // Always try upstream with range-specific request for fresh data
   try {
     const response = await runSingleFlight('player-wealth-history', [player.id, range], async () => {
       const now = new Date();
@@ -535,29 +525,32 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
       return history;
     });
 
-    if (Array.isArray(response)) {
+    if (Array.isArray(response) && response.length > 0) {
       return {
-        history: filterHistoryByRange(response, range),
+        history: response,
         fetchedAt: new Date().toISOString(),
         updatedAt: response[response.length - 1]?.updatedAt || response[response.length - 1]?.createdAt || response[response.length - 1]?.time || '',
         source: 'upstream',
         stale: false,
       };
     }
-
-    throw new Error('No wealth history found');
-  } catch (error) {
-    if (Array.isArray(cached.history) && cached.history.length) {
-      return {
-        history: filterHistoryByRange(cached.history, range),
-        fetchedAt: cached.fetchedAt,
-        updatedAt: cached.latestEntryAt || '',
-        source: 'database',
-        stale: true,
-      };
-    }
-    throw error;
+  } catch (upstreamError) {
+    console.error('Upstream wealth history error:', upstreamError.message);
   }
+
+  // Fallback to cached data if upstream fails
+  const cached = await getCachedPlayerWealthHistorySummary(player.id);
+  if (Array.isArray(cached.history) && cached.history.length) {
+    return {
+      history: filterHistoryByRange(cached.history, range),
+      fetchedAt: cached.fetchedAt,
+      updatedAt: cached.latestEntryAt || '',
+      source: 'database',
+      stale: true,
+    };
+  }
+
+  throw new Error('Unable to load wealth history');
 }
 
 export async function handleTrackerRequest(request, response) {
