@@ -59,8 +59,8 @@ const dictionaries = {
         description: 'Masukkan UUID atau nama pemain untuk melihat statistik pertempuran, K/D, dan riwayat kekayaan.',
       },
       wealth: {
-        title: 'Kekayaan Pemain — DFtracker',
-        description: 'Lihat stash value dan riwayat kekayaan pemain Delta Force yang sedang aktif.',
+        title: 'Wealth Tracker — Cek Stash & Riwayat Kekayaan',
+        description: 'Cek stash value dan lihat grafik perubahan kekayaan pemain Delta Force dari waktu ke waktu.',
       },
       leaderboard: {
         title: 'Leaderboard Player — DFtracker',
@@ -371,8 +371,8 @@ const dictionaries = {
         description: 'Enter a UUID or player name to view combat stats, K/D, and wealth history.',
       },
       wealth: {
-        title: 'Player Wealth — DFtracker',
-        description: 'View stash value and wealth history for the currently active Delta Force player.',
+        title: 'Wealth Tracker — Check Stash Value & Wealth History',
+        description: 'Track Delta Force player stash value and view wealth history charts. Monitor changes in player net worth over time.',
       },
       leaderboard: {
         title: 'Player Leaderboard — DFtracker',
@@ -683,8 +683,8 @@ const dictionaries = {
         description: '输入 UUID 或玩家名称，查看战斗数据、K/D 和财富历史。',
       },
       wealth: {
-        title: '玩家财富 — DFtracker',
-        description: '查看当前活跃 Delta Force 玩家 的仓库价值与财富历史。',
+        title: '财富追踪 — 查看仓库价值与财富历史',
+        description: '追踪 Delta Force 玩家仓库价值，查看财富历史图表。实时监控玩家净资产变化。',
       },
       leaderboard: {
         title: '玩家排行榜 — DFtracker',
