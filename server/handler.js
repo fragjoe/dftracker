@@ -516,14 +516,14 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
   }
 
   try {
-    const response = await runSingleFlight('player-wealth-history', [player.id], async () => {
+    const response = await runSingleFlight('player-wealth-history', [player.id, range], async () => {
       const now = new Date();
-      const startTime = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+      const days = range === '24h' ? 1 : range === '7d' ? 7 : 30;
+      const startTime = new Date(now.getTime() - (days * 24 * 60 * 60 * 1000));
       const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', {
         playerId: player.id,
-        pageSize: 200,
+        pageSize: 100,
         startTime: startTime.toISOString(),
-        endTime: now.toISOString(),
       });
       const history = upstream?.historicalStashValues || upstream?.stashes || upstream?.historicalStashValue || upstream?.series || [];
       if (Array.isArray(history) && history.length) {

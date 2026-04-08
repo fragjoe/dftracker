@@ -183,7 +183,6 @@ export async function fetchTrackedPlayerWealthHistory({ playerId = '', range = '
   const payload = await getPlayerOperationHistoricalStashValue(playerId, {
     pageSize: 50,
     startTime: getRangeStartIso(range),
-    endTime: new Date().toISOString(),
   });
   return {
     history: payload?.historicalStashValues || payload?.stashes || payload?.historicalStashValue || payload?.series || [],
