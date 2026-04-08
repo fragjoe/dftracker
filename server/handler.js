@@ -510,22 +510,33 @@ async function getTrackedPlayerWealthHistory({ player, range = '30d' } = {}) {
       const now = new Date();
       const days = range === '24h' ? 1 : range === '7d' ? 7 : 30;
       const startTime = new Date(now.getTime() - (days * 24 * 60 * 60 * 1000));
-      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', {
-        playerId: player.id,
-        pageSize: 100,
-        startTime: startTime.toISOString(),
-      });
-      const history = upstream?.historicalStashValues || upstream?.stashes || upstream?.historicalStashValue || upstream?.series || [];
-      if (Array.isArray(history) && history.length) {
-        await savePlayerWealthHistorySnapshot({
-          player,
-          history,
-        });
-      }
-      return history;
+
+      // Fetch all pages to get complete data
+      const allHistory = [];
+      let nextPageToken = '';
+
+      do {
+        const body = {
+          playerId: player.id,
+          pageSize: 100,
+          startTime: startTime.toISOString(),
+        };
+        if (nextPageToken) body.pageToken = nextPageToken;
+
+        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/GetPlayerOperationHistoricalStashValue', body);
+        const history = upstream?.historicalStashValues || upstream?.stashes || upstream?.historicalStashValue || upstream?.series || [];
+        allHistory.push(...(Array.isArray(history) ? history : []));
+        nextPageToken = upstream?.nextPageToken || '';
+      } while (nextPageToken && allHistory.length < (upstream?.totalSize || allHistory.length + 100));
+
+      return allHistory;
     });
 
     if (Array.isArray(response) && response.length > 0) {
+      await savePlayerWealthHistorySnapshot({
+        player,
+        history: response,
+      });
       return {
         history: response,
         fetchedAt: new Date().toISOString(),
