@@ -1570,36 +1570,31 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
   const normalizedItems = rawItems.filter((item) => item && typeof item === 'object' && item.id);
 
   if (storageMode === 'postgres') {
-    await postgresClient.begin(async (tx) => {
-      await tx`
-        DELETE FROM market_item_cache
-        WHERE language = ${normalizedLanguage}
+    // Use upsert approach: INSERT ... ON CONFLICT DO UPDATE
+    // This is more efficient than DELETE + INSERT for large datasets
+    for (const item of normalizedItems) {
+      const marketColumns = normalizeMarketItemColumns(item);
+      await postgresClient`
+        INSERT INTO market_item_cache (
+          item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at
+        )
+        VALUES (
+          ${String(item.id || '')},
+          ${normalizedLanguage},
+          ${postgresClient.json(item || {})},
+          ${marketColumns.nameText},
+          ${marketColumns.searchText},
+          ${marketColumns.sortNameText},
+          NOW()
+        )
+        ON CONFLICT (item_id, language) DO UPDATE SET
+          item_json = EXCLUDED.item_json,
+          name_text = EXCLUDED.name_text,
+          search_text = EXCLUDED.search_text,
+          sort_name_text = EXCLUDED.sort_name_text,
+          fetched_at = EXCLUDED.fetched_at
       `;
-
-      // Batch insert using UNNEST for efficiency
-      if (normalizedItems.length > 0) {
-        const itemIds = normalizedItems.map((item) => String(item.id || ''));
-        const itemJson = normalizedItems.map((item) => JSON.stringify(item || {}));
-        const nameTexts = normalizedItems.map((item) => normalizeMarketItemColumns(item).nameText);
-        const searchTexts = normalizedItems.map((item) => normalizeMarketItemColumns(item).searchText);
-        const sortNameTexts = normalizedItems.map((item) => normalizeMarketItemColumns(item).sortNameText);
-
-        await tx.unsafe(`
-          INSERT INTO market_item_cache (
-            item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at
-          )
-          SELECT * FROM UNNEST(
-            $1::text[],
-            $2::text[],
-            $3::jsonb[],
-            $4::text[],
-            $5::text[],
-            $6::text[],
-            NOW()
-          ) AS t(item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at)
-        `, [itemIds, [normalizedLanguage], itemJson, nameTexts, searchTexts, sortNameTexts]);
-      }
-    });
+    }
     return;
   }
 
