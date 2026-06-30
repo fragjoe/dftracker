@@ -216,7 +216,48 @@ async function postUpstream(path, body = {}) {
   return response.json();
 }
 
-async function syncMarketCatalogLanguage(language = 'LANGUAGE_EN', { force = false } = {}) {
+async function syncMarketCatalogLanguage(language = 'LANGUAGE_EN', { force = false, chunkIndex = -1 } = {}) {
+  // If chunkIndex >= 0, do single page fetch only (for chunked refresh)
+  if (chunkIndex >= 0) {
+    return runSingleFlight('market-catalog-chunk', [language, chunkIndex], async () => {
+      const pageSize = 500;
+      let pageToken = '';
+
+      // Skip to the requested chunk
+      for (let i = 0; i < chunkIndex && pageToken; i++) {
+        const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+          filter: '',
+          pageToken,
+          pageSize,
+          language,
+        });
+        pageToken = upstream.nextPageToken || '';
+      }
+
+      // Fetch this chunk's page
+      const upstream = await postUpstream('/deltaforceapi.gateway.v1.ApiService/ListAuctionItems', {
+        filter: '',
+        pageToken,
+        pageSize,
+        language,
+      });
+
+      const pageItems = upstream.items || upstream.auctionItems || [];
+      const fetchedAt = new Date().toISOString();
+      await replaceMarketCatalog(language, pageItems, fetchedAt);
+
+      return {
+        language,
+        chunkIndex,
+        fetchedAt,
+        itemCount: pageItems.length,
+        hasMore: !!upstream.nextPageToken,
+        source: 'upstream',
+      };
+    });
+  }
+
+  // Normal full refresh (chunkIndex < 0)
   const cachedCatalog = await getMarketCatalogSummary({
     language,
     search: '',
@@ -266,6 +307,7 @@ async function syncMarketCatalogLanguage(language = 'LANGUAGE_EN', { force = fal
 export async function refreshMarketCatalogs({
   languages = MARKET_CATALOG_SYNC_LANGUAGES,
   force = false,
+  chunkIndex = -1,
 } = {}) {
   const normalizedLanguages = Array.from(new Set(
     (Array.isArray(languages) ? languages : [languages])
@@ -275,12 +317,13 @@ export async function refreshMarketCatalogs({
 
   const results = [];
   for (const language of normalizedLanguages) {
-    results.push(await syncMarketCatalogLanguage(language, { force }));
+    results.push(await syncMarketCatalogLanguage(language, { force, chunkIndex }));
   }
 
   return {
     refreshedAt: new Date().toISOString(),
     force,
+    chunkIndex,
     languages: normalizedLanguages,
     results,
   };

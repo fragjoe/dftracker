@@ -8,7 +8,6 @@ export default async function handler(request, response) {
 
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const type = url.searchParams.get('type') || 'all';
-  const force = url.searchParams.get('force') === 'true';
   const secret = url.searchParams.get('secret') || '';
 
   // Simple protection - change this secret to something unique
@@ -24,10 +23,18 @@ export default async function handler(request, response) {
   }
 
   try {
+    // Chunked refresh support
+    const chunkParam = url.searchParams.get('chunk');
+    const chunkIndex = chunkParam !== null ? parseInt(chunkParam, 10) : -1;
+
     const results = {};
 
     if (type === 'all' || type === 'market') {
-      results.market = await refreshMarketCatalogs({ force: true });
+      if (chunkIndex >= 0) {
+        results.market = await refreshMarketCatalogs({ languages: ['LANGUAGE_EN'], force: true, chunkIndex });
+      } else {
+        results.market = await refreshMarketCatalogs({ force: true });
+      }
     }
 
     if (type === 'all' || type === 'seasons') {
@@ -38,7 +45,7 @@ export default async function handler(request, response) {
       ok: true,
       refreshedAt: new Date().toISOString(),
       type,
-      force,
+      chunk: chunkIndex,
       results,
       note: 'Remove this endpoint after use for security'
     });
