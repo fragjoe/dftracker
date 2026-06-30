@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/refresh-seasons",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/cron/refresh-market-catalog",
       "schedule": "0 3 * * *"
     }

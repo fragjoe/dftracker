@@ -286,6 +286,82 @@ export async function refreshMarketCatalogs({
   };
 }
 
+const SEASON_SYNC_LANGUAGES = ['LANGUAGE_EN', 'LANGUAGE_ZH_HANS'];
+
+function normalizeSeasons(seasons = []) {
+  return seasons
+    .map((s) => ({
+      id: s.id || '',
+      number: Number(s.number || s.seasonNumber || 0),
+      name: s.name || '',
+      active: Boolean(s.active),
+    }))
+    .filter((s) => s.id && s.number > 0);
+}
+
+export async function refreshSeasons({ languages = SEASON_SYNC_LANGUAGES, force = false } = {}) {
+  const normalizedLanguages = Array.from(new Set(
+    (Array.isArray(languages) ? languages : [languages])
+      .filter(Boolean)
+      .map((language) => String(language).trim()),
+  ));
+
+  const results = [];
+  for (const language of normalizedLanguages) {
+    const result = await runSingleFlight('season-refresh', [language], async () => {
+      if (!force) {
+        const cached = await getCachedSeasonsSummary(language);
+        if (cached.isFresh) {
+          return {
+            language,
+            source: 'database',
+            skipped: true,
+            fetchedAt: cached.fetchedAt,
+            seasonCount: cached.seasons.length,
+            activeSeason: cached.seasons.find((s) => s.active)?.name || null,
+          };
+        }
+      }
+
+      const upstream = await fetchUpstreamSeasons({
+        pageSize: 50,
+        pageToken: '',
+        language,
+      });
+
+      const upstreamSeasons = normalizeSeasons(upstream?.seasons || []);
+      const fetchedAt = new Date().toISOString();
+
+      if (upstreamSeasons.length > 0) {
+        await writeCachedSeasons(upstreamSeasons, fetchedAt, language);
+      }
+
+      const activeSeason = upstreamSeasons.find((s) => s.active);
+
+      return {
+        language,
+        source: 'upstream',
+        skipped: false,
+        fetchedAt,
+        seasonCount: upstreamSeasons.length,
+        activeSeason: activeSeason?.name || null,
+        latestSeasonNumber: upstreamSeasons.length > 0
+          ? Math.max(...upstreamSeasons.map((s) => s.number))
+          : null,
+      };
+    });
+
+    results.push(result);
+  }
+
+  return {
+    refreshedAt: new Date().toISOString(),
+    force,
+    languages: normalizedLanguages,
+    results,
+  };
+}
+
 function getSingleFlightKey(scope, parts = []) {
   return `${scope}:${parts.map((part) => String(part || '')).join(':')}`;
 }
