@@ -1576,28 +1576,28 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
         WHERE language = ${normalizedLanguage}
       `;
 
-      for (const item of normalizedItems) {
-        const marketColumns = normalizeMarketItemColumns(item);
-        await tx`
+      // Batch insert using UNNEST for efficiency
+      if (normalizedItems.length > 0) {
+        const itemIds = normalizedItems.map((item) => String(item.id || ''));
+        const itemJson = normalizedItems.map((item) => JSON.stringify(item || {}));
+        const nameTexts = normalizedItems.map((item) => normalizeMarketItemColumns(item).nameText);
+        const searchTexts = normalizedItems.map((item) => normalizeMarketItemColumns(item).searchText);
+        const sortNameTexts = normalizedItems.map((item) => normalizeMarketItemColumns(item).sortNameText);
+
+        await tx.unsafe(`
           INSERT INTO market_item_cache (
-            item_id,
-            language,
-            item_json,
-            name_text,
-            search_text,
-            sort_name_text,
-            fetched_at
+            item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at
           )
-          VALUES (
-            ${String(item.id || '')},
-            ${normalizedLanguage},
-            ${postgresClient.json(item || {})},
-            ${marketColumns.nameText},
-            ${marketColumns.searchText},
-            ${marketColumns.sortNameText},
+          SELECT * FROM UNNEST(
+            $1::text[],
+            $2::text[],
+            $3::jsonb[],
+            $4::text[],
+            $5::text[],
+            $6::text[],
             NOW()
-          )
-        `;
+          ) AS t(item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at)
+        `, [itemIds, [normalizedLanguage], itemJson, nameTexts, searchTexts, sortNameTexts]);
       }
     });
     return;
