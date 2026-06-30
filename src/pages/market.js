@@ -420,12 +420,19 @@ function renderMarketListPage({
 }
 
 function createMarketListCard(item) {
+  const iconUrl = item.iconUrl || '';
+  const iconHtml = iconUrl
+    ? `<img src="${escapeHTML(iconUrl)}" alt="" style="width: 40px; height: 40px; object-fit: contain; border-radius: var(--radius-sm);" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />`
+    : '';
+  const fallbackIcon = `<i data-lucide="package" style="width: 16px; height: 16px;"></i>`;
+  const iconContainerContent = iconUrl ? iconHtml + `<div style="display: none;">${fallbackIcon}</div>` : fallbackIcon;
+
   const card = document.createElement('div');
   card.className = 'list-item-card';
   card.dataset.itemId = item.id;
   card.innerHTML = `
-    <div class="list-item-icon">
-      <i data-lucide="package" style="width: 16px; height: 16px;"></i>
+    <div class="list-item-icon" style="width: 40px; height: 40px; justify-content: center; align-items: center;">
+      ${iconContainerContent}
     </div>
     <div class="list-item-main">
       <div class="list-item-info">
