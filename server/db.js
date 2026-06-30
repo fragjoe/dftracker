@@ -1599,7 +1599,18 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
           sort_name_text,
           fetched_at
         )
-        SELECT item_id, language, item_json, name_text, search_text, sort_name_text, fetched_at
+        SELECT
+          item_id,
+          language,
+          item_json,
+          name_text,
+          search_text,
+          sort_name_text,
+          CASE
+            WHEN fetched_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'
+            THEN to_timestamp(fetched_at, 'YYYY-MM-DD"T"HH24:MI:SS') AT TIME ZONE 'UTC'
+            ELSE NOW()
+          END
         FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS rows(
           item_id text,
           language text,
