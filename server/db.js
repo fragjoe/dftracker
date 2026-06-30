@@ -1576,50 +1576,29 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
         WHERE language = ${normalizedLanguage}
       `;
 
-      if (normalizedItems.length === 0) {
-        return;
-      }
-
-      const payload = normalizedItems.map((item) => ({
-        item_id: String(item.id || ''),
-        language: normalizedLanguage,
-        item_json: item || {},
-        name_text: normalizeMarketItemColumns(item).nameText,
-        search_text: normalizeMarketItemColumns(item).searchText,
-        sort_name_text: normalizeMarketItemColumns(item).sortNameText,
-        fetched_at: String(fetchedAt || ''),
-      }));
-
-      if (payload.length === 0) {
-        return;
-      }
-
-      const payloadJson = JSON.stringify(payload);
-      const safePayload = payloadJson === 'null' || payloadJson === '[]' ? '[]' : payloadJson;
-
-      await tx.unsafe(`
-        INSERT INTO market_item_cache (
-          item_id,
-          language,
-          item_json,
-          name_text,
-          search_text,
-          sort_name_text,
-          fetched_at
-        )
-        SELECT
-          (item->>'item_id')::text,
-          (item->>'language')::text,
-          (item->>'item_json')::jsonb,
-          (item->>'name_text')::text,
-          (item->>'search_text')::text,
-          (item->>'sort_name_text')::text,
-          COALESCE(
-            NULLIF((item->>'fetched_at')::text, '')::timestamptz,
+      for (const item of normalizedItems) {
+        const marketColumns = normalizeMarketItemColumns(item);
+        await tx`
+          INSERT INTO market_item_cache (
+            item_id,
+            language,
+            item_json,
+            name_text,
+            search_text,
+            sort_name_text,
+            fetched_at
+          )
+          VALUES (
+            ${String(item.id || '')},
+            ${normalizedLanguage},
+            ${tx.json(item || {})},
+            ${marketColumns.nameText},
+            ${marketColumns.searchText},
+            ${marketColumns.sortNameText},
             NOW()
           )
-        FROM jsonb_array_elements(${safePayload}::jsonb) AS item
-      `);
+        `;
+      }
     });
     return;
   }
