@@ -1591,7 +1591,7 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
           VALUES (
             ${String(item.id || '')},
             ${normalizedLanguage},
-            ${tx.json(item || {})},
+            ${postgresClient.json(item || {})},
             ${marketColumns.nameText},
             ${marketColumns.searchText},
             ${marketColumns.sortNameText},
