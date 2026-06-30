@@ -1566,7 +1566,8 @@ export async function deleteClientPreference(clientId = '', key = '') {
 export async function replaceMarketCatalog(language = '', items = [], fetchedAt = getNowIso()) {
   await ensureReady();
   const normalizedLanguage = String(language || '');
-  const normalizedItems = Array.isArray(items) ? items.filter((item) => item?.id) : [];
+  const rawItems = Array.isArray(items) ? items : [];
+  const normalizedItems = rawItems.filter((item) => item && typeof item === 'object' && item.id);
 
   if (storageMode === 'postgres') {
     await postgresClient.begin(async (tx) => {
@@ -1575,21 +1576,28 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
         WHERE language = ${normalizedLanguage}
       `;
 
-      if (!normalizedItems.length) {
+      if (normalizedItems.length === 0) {
         return;
       }
 
       const payload = normalizedItems.map((item) => ({
-        item_id: String(item.id),
+        item_id: String(item.id || ''),
         language: normalizedLanguage,
         item_json: item || {},
         name_text: normalizeMarketItemColumns(item).nameText,
         search_text: normalizeMarketItemColumns(item).searchText,
         sort_name_text: normalizeMarketItemColumns(item).sortNameText,
-        fetched_at: fetchedAt,
+        fetched_at: String(fetchedAt || ''),
       }));
 
-      await tx`
+      if (payload.length === 0) {
+        return;
+      }
+
+      const payloadJson = JSON.stringify(payload);
+      const safePayload = payloadJson === 'null' || payloadJson === '[]' ? '[]' : payloadJson;
+
+      await tx.unsafe(`
         INSERT INTO market_item_cache (
           item_id,
           language,
@@ -1600,27 +1608,18 @@ export async function replaceMarketCatalog(language = '', items = [], fetchedAt 
           fetched_at
         )
         SELECT
-          item_id,
-          language,
-          item_json,
-          name_text,
-          search_text,
-          sort_name_text,
-          CASE
-            WHEN fetched_at ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'
-            THEN to_timestamp(fetched_at, 'YYYY-MM-DD"T"HH24:MI:SS') AT TIME ZONE 'UTC'
-            ELSE NOW()
-          END
-        FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS rows(
-          item_id text,
-          language text,
-          item_json jsonb,
-          name_text text,
-          search_text text,
-          sort_name_text text,
-          fetched_at text
-        )
-      `;
+          (item->>'item_id')::text,
+          (item->>'language')::text,
+          (item->>'item_json')::jsonb,
+          (item->>'name_text')::text,
+          (item->>'search_text')::text,
+          (item->>'sort_name_text')::text,
+          COALESCE(
+            NULLIF((item->>'fetched_at')::text, '')::timestamptz,
+            NOW()
+          )
+        FROM jsonb_array_elements(${safePayload}::jsonb) AS item
+      `);
     });
     return;
   }
